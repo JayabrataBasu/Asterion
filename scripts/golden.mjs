@@ -4,6 +4,7 @@
 //   node scripts/golden.mjs update          regenerate baselines
 //   node scripts/golden.mjs shots <dir>     save full-size screenshots of every scene (for docs / before-after)
 //   node scripts/golden.mjs url '<query>' <file.png>   one ad-hoc screenshot
+//   node scripts/golden.mjs console '<query>'          print browser console errors / logs for a scene
 //   GOLDEN_ONLY=a,b limits the scenes; CHROME=<path> picks the browser.
 // No dependencies: PNG decode/encode uses node:zlib. Baselines are per-machine regression guards (software GL), not cross-GPU truth.
 import { spawn, spawnSync } from 'node:child_process';
@@ -103,10 +104,16 @@ async function main() {
     const shotDir = MODE === 'shots' ? (process.argv[3] ?? join(root, 'docs', 'screens')) : null;
     if (shotDir) mkdirSync(shotDir, { recursive: true });
     let fail = 0;
-    const list = MODE === 'url' ? [['adhoc', process.argv[3]]] : Object.entries(SCENES);
+    const list = MODE === 'url' || MODE === 'console' ? [['adhoc', process.argv[3]]] : Object.entries(SCENES);
     for (const [name, q] of list) {
       if (only && !only.includes(name)) continue;
       const file = join(tmp, name + '.png');
+      if (MODE === 'console') {
+        const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--enable-logging=stderr', '--v=0',
+          `--user-data-dir=${join(tmp, 'prof')}`, '--virtual-time-budget=2000', '--dump-dom', `http://localhost:${PORT}/?${q}`], { timeout: 120000, encoding: 'utf8' });
+        for (const l of (r.stderr ?? '').split(String.fromCharCode(10))) if (/CONSOLE|Uncaught|ERROR:/.test(l) && !/gpu|GPU|dbus|sandbox/.test(l)) console.log(l.slice(0, 600));
+        continue;
+      }
       spawnSync(chrome, ['--headless=new', '--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist', '--hide-scrollbars',
         `--user-data-dir=${join(tmp, 'prof')}`, '--window-size=1600,900', '--virtual-time-budget=3000', `--screenshot=${file}`, `http://localhost:${PORT}/?${q}`], { timeout: 120000, stdio: 'ignore' });
       if (!existsSync(file)) { console.log(`FAIL  ${name}: no screenshot`); fail = 1; continue; }

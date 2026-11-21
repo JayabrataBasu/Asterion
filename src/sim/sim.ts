@@ -79,6 +79,8 @@ export class Sim {
   shots = 0; hits = 0; dashCd = 0; muzzleT = 0; hpIdx = 0;
   /** Sector events: warn 0 none / 1 comet / 2 meteors / 3 flare / 4 storm; warnT counts the warning down; flare/storm are 0..1 envelopes. */
   warn = 0; warnT = 0; flare = 0; storm = 0;
+  /** Rare scale set pieces (progress 0..1, 0 = off): 5 a ringed giant eclipses the sun (45 s), 6 a megastructure crosses the sky (90 s). */
+  ecl = 0; mega = 0; private eclT = 0; private megaT = 0; debugEvtP = 0;
   private wasBoost = false;
   private flareT = 0; private stormT = 0; private meteorLeft = 0; private meteorCd = 0; private meteorAng = 0;
   private evtNext = 40; private lastEvt = 0; private haulCd = 45; nHaul = 0; private nHaulTmp = 0;
@@ -200,7 +202,7 @@ export class Sim {
     this.sx = 0; this.sy = 0; this.svx = 0; this.svy = 0; this.sa = 0.3; this.spx = 0; this.spy = 0; this.spa = 0.3;
     this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.firedT = 0; this.wingCd = 3; this.nWing = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
     this.objKills = 0; this.objTarget = 6; this.objTier = 0; this.nextBoss = 150; this.frIdx = -1; this.escortFails = 0; this.sw = 0;
-    this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
+    this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.ecl = 0; this.mega = 0; this.eclT = 0; this.megaT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
     this.caches.clear(); this.slowT = 0; this.bossKills = 0; this.missiles = this.missileCap; this.missileCd = 0; this.mlife.fill(0); this.eshield.fill(0);
     this.cool = 0; this.lastHit = -99; this.invuln = 2; this.hitFlash = 0;
     this.evHead = this.evTail = 0; this.hitT = 0; this.echarge.fill(0);
@@ -593,9 +595,10 @@ export class Sim {
   triggerEvent(type: number): void { this.warn = type; this.warnT = 5; this.lastEvt = type; }
 
   private updateEvents(): void {
-    if (this.alive && this.warn === 0 && this.flareT <= 0 && this.stormT <= 0 && this.meteorLeft <= 0 && this.time >= this.evtNext) {
+    if (this.alive && this.warn === 0 && this.flareT <= 0 && this.stormT <= 0 && this.meteorLeft <= 0 && this.eclT <= 0 && this.megaT <= 0 && this.time >= this.evtNext) {
       let ty = 1 + Math.floor(this.rng.next() * 4);
       if (ty === this.lastEvt) ty = (ty % 4) + 1;
+      if (this.rng.next() < 0.14) ty = this.lastEvt === 5 ? 6 : this.lastEvt === 6 ? 5 : this.rng.next() < 0.5 ? 5 : 6;   // rare set pieces
       this.triggerEvent(ty); this.evtNext = this.time + 70 + this.rng.next() * 40;
     }
     if (this.warn > 0) {
@@ -613,6 +616,8 @@ export class Sim {
           }
         } else if (ty === 2) { this.meteorLeft = 14; this.meteorCd = 0; this.meteorAng = a; }
         else if (ty === 3) this.flareT = 8;
+        else if (ty === 5) this.eclT = 45 * (1 - this.debugEvtP);
+        else if (ty === 6) this.megaT = 90 * (1 - this.debugEvtP);
         else this.stormT = 10;
       }
     }
@@ -627,6 +632,8 @@ export class Sim {
       }
     }
     if (this.flareT > 0) { this.flareT -= DT; this.flare = this.flareT > 0 ? Math.sin(Math.PI * (1 - this.flareT / 8)) : 0; } else this.flare = 0;
+    if (this.eclT > 0) { this.eclT -= DT; this.ecl = this.eclT > 0 ? 1 - this.eclT / 45 : 0; } else this.ecl = 0;
+    if (this.megaT > 0) { this.megaT -= DT; this.mega = this.megaT > 0 ? 1 - this.megaT / 90 : 0; } else this.mega = 0;
     if (this.stormT > 0) { this.stormT -= DT; this.storm = this.stormT > 0 ? Math.min(1, (10 - this.stormT) / 1.5, this.stormT / 1.5) : 0; } else this.storm = 0;
   }
 

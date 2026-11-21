@@ -12,7 +12,15 @@ export interface FrameParams {
   planets: Float32Array; nPlanets: number;       // stride 8 (x,y,r,type,seed,ring,hue,spin)
   flash: number; hit: number;
   streakX: number; streakY: number; streak: number; ship?: [number, number, number]; combat?: number; flare?: number; storm?: number; warp?: Float32Array; tint?: [number, number, number];
+  /** Star colour of the current system, eclipse / megastructure progress (0 = off), heading + speed factor for star aberration. */
+  sunTint?: [number, number, number]; ecl?: number; mega?: number; vel?: [number, number, number];
+  /** Typed-arrival reveal radius in cells (<0 = off); planet index being rewritten by the scan view (-1 none); layer debug. */
+  reveal?: number; scanPlanet?: number; layers?: boolean;
+  /** Per-sector nebula amount (negative space: most of space is empty). */
+  neb?: number;
 }
+/** Scene glyph table (index order must match the G_* defines in FS_SCENE). */
+const GLYPHS = ['-', '/', '|', String.fromCharCode(92), '.', ',', ':', ';', '~', '=', '#', '%', '*', "'", '@', '+', 'o'];
 
 const BLOOM_LEVELS = 5;
 const ZERO4 = new Float32Array(4);
@@ -23,6 +31,8 @@ export class Renderer {
   readonly glows = new GlowBatch();
   readonly sprites = new SpriteBatch();
   private readonly noWarp = new Float32Array(24);
+  /** Camera zoom: cell width is reduced by this many CSS px (main tweens the step with a CSS scale). */
+  zoomCss = 0;
   cols = 0; rows = 0; cwPx = 8; chPx = 16; aspect = 2; W = 0; H = 0; ox = 0; oy = 0; dpr = 1;
   drawCalls = 0; gpuMs = 0; hdr = false;
 
@@ -38,10 +48,12 @@ export class Renderer {
   private scene!: Target; private compose!: Target; private bloom: Target[] = [];
   private atlasTex!: WebGLTexture; private rampTex!: WebGLTexture;
   private atlas!: AtlasInfo;
+  private readonly atlasCache = new Map<string, AtlasInfo>();
   private readonly rampLut = new Uint8Array(256);
   private lastRamp = -1; private lastWeight = -1; private lastCell = -1;
   private readonly pa = new Float32Array(32); private readonly pb = new Float32Array(32);
-  private readonly G = new Float32Array(8);
+  private readonly G = new Float32Array(24);
+  private readonly pc = new Float32Array(32);
   private readonly fill = Int32Array.from(Array.from(FILL_CHARS, c => gi(c)));
   private timerExt: any = null; private queries: WebGLQuery[] = []; private qIdx = 0; private qPending: boolean[] = [false, false, false];
 
@@ -61,9 +73,9 @@ export class Renderer {
     this.pDown = this.prog(S.VS_FULLSCREEN, S.FS_BLOOM_DOWN);
     this.pUp = this.prog(S.VS_FULLSCREEN, S.FS_BLOOM_UP);
     this.pComp = this.prog(S.VS_FULLSCREEN, S.FS_COMPOSITE);
-    this.uScene = this.locs(this.pScene, ['uRes', 'uCam', 'uAspect', 'uTime', 'uNP', 'uPA', 'uPB', 'uG', 'uNeb', 'uSun', 'uStreak', 'uTint', 'uShipL', 'uFlare', 'uStorm']);
+    this.uScene = this.locs(this.pScene, ['uRes', 'uCam', 'uAspect', 'uTime', 'uNP', 'uPA', 'uPB', 'uPC', 'uG', 'uNeb', 'uSun', 'uStreak', 'uTint', 'uShipL', 'uFlare', 'uStorm', 'uSunTint', 'uEcl', 'uMega', 'uVel', 'uCombat']);
     this.uGlow = this.locs(this.pGlow, ['uRes', 'uCam', 'uAspect']);
-    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime']);
+    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uBgMax', 'uReveal', 'uLayers']);
     this.uGlyph = this.locs(this.pGlyph, ['uCellPx', 'uOrigin', 'uCanvas', 'uScene', 'uAtlas', 'uBgK']);
     this.uSprite = this.locs(this.pSprite, ['uRes', 'uCam', 'uAspect', 'uTime']);
     this.uMatch = this.locs(this.pMatch, ['uSpr', 'uSig', 'uCand', 'uNC', 'uFill']);
@@ -110,7 +122,7 @@ export class Renderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
-    this.G.set([gi('-'), gi('/'), gi('|'), gi('\\'), gi('.'), gi(':'), gi('+'), gi('*')].map(v => v / 255));
+    this.G.set(GLYPHS.map(c => gi(c) / 255));
   }
 
   // ------------------------------------------------------------------ setup helpers
@@ -172,7 +184,7 @@ export class Renderer {
   resize(cssW: number, cssH: number, dpr: number): void {
     
     this.dpr = dpr;
-    this.cwPx = Math.max(3, Math.round(settings.cellCss * dpr));
+    this.cwPx = Math.max(3, Math.round((settings.cellCss - this.zoomCss) * dpr));
     this.chPx = this.cwPx * 2; this.aspect = 2;
     this.W = Math.max(1, Math.round(cssW * dpr)); this.H = Math.max(1, Math.round(cssH * dpr));
     this.canvas.width = this.W; this.canvas.height = this.H;
@@ -194,7 +206,9 @@ export class Renderer {
   refreshAtlas(force = false): void {
     const gl = this.gl;
     if (force || this.lastWeight !== settings.weight || this.lastCell !== this.cwPx) {
-      this.atlas = buildAtlas(this.cwPx, this.chPx, settings.weight);
+      const key = this.cwPx + ':' + settings.weight;          // cache: zoom steps switch cell size often
+      this.atlas = this.atlasCache.get(key) ?? buildAtlas(this.cwPx, this.chPx, settings.weight);
+      this.atlasCache.set(key, this.atlas);
       gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, this.atlasTex);
       gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, this.atlas.canvas);
@@ -229,15 +243,22 @@ export class Renderer {
     gl.useProgram(this.pScene); gl.bindVertexArray(this.vaoEmpty);
     const u = this.uScene;
     gl.uniform2f(u.uRes, this.cols, this.rows); gl.uniform2f(u.uCam, f.camX, f.camY);
-    gl.uniform1f(u.uAspect, this.aspect); gl.uniform1f(u.uTime, f.time); gl.uniform1f(u.uNeb, st.nebula * (1 - 0.45 * (f.combat ?? 0))); gl.uniform1f(u.uSun, st.sun * (1 - 0.55 * (f.combat ?? 0)) * (1 + 1.6 * (f.flare ?? 0))); gl.uniform1f(u.uFlare, f.flare ?? 0); gl.uniform1f(u.uStorm, f.storm ?? 0);
+    gl.uniform1f(u.uAspect, this.aspect); gl.uniform1f(u.uTime, f.time); gl.uniform1f(u.uNeb, st.nebula * (f.neb ?? 1) * (1 - 0.45 * (f.combat ?? 0))); gl.uniform1f(u.uSun, st.sun * (1 - 0.55 * (f.combat ?? 0)) * (1 + 1.6 * (f.flare ?? 0))); gl.uniform1f(u.uFlare, f.flare ?? 0); gl.uniform1f(u.uStorm, f.storm ?? 0);
     const np = Math.min(8, f.nPlanets);
-    this.pa.fill(0); this.pb.fill(0);
+    this.pa.fill(0); this.pb.fill(0); this.pc.fill(0);
     for (let i = 0; i < np; i++) {
       const o = i * 8;
+      const dd = Math.max(0, Math.hypot(f.planets[o] - f.camX, f.planets[o + 1] - f.camY) - f.planets[o + 2]);
+      const t = Math.min(1, Math.max(0, (dd - this.cols * 0.1) / (this.cols * 0.5)));
+      this.pc[i * 4] = 1 - t * t * (3 - 2 * t);                 // detail: resolve-on-approach
+      this.pc[i * 4 + 1] = f.scanPlanet === i ? 1 : 0;
       this.pa[i * 4] = f.planets[o]; this.pa[i * 4 + 1] = f.planets[o + 1]; this.pa[i * 4 + 2] = f.planets[o + 2]; this.pa[i * 4 + 3] = f.planets[o + 3];
       this.pb[i * 4] = f.planets[o + 4]; this.pb[i * 4 + 1] = f.planets[o + 5]; this.pb[i * 4 + 2] = f.planets[o + 6]; this.pb[i * 4 + 3] = f.planets[o + 7];
     }
-    gl.uniform1i(u.uNP, np); gl.uniform4fv(u.uPA, this.pa); gl.uniform4fv(u.uPB, this.pb); gl.uniform1fv(u.uG, this.G); gl.uniform3f(u.uStreak, f.streakX, f.streakY, f.streak); const sl = f.ship; gl.uniform3f(u.uShipL, sl ? sl[0] : 0, sl ? sl[1] : 0, sl ? sl[2] : 0); const tn = f.tint; gl.uniform3f(u.uTint, tn ? tn[0] : 1, tn ? tn[1] : 1, tn ? tn[2] : 1);
+    gl.uniform1i(u.uNP, np); gl.uniform4fv(u.uPA, this.pa); gl.uniform4fv(u.uPB, this.pb); gl.uniform4fv(u.uPC, this.pc); gl.uniform1fv(u.uG, this.G); gl.uniform3f(u.uStreak, f.streakX, f.streakY, f.streak); const sl = f.ship; gl.uniform3f(u.uShipL, sl ? sl[0] : 0, sl ? sl[1] : 0, sl ? sl[2] : 0); const tn = f.tint; gl.uniform3f(u.uTint, tn ? tn[0] : 1, tn ? tn[1] : 1, tn ? tn[2] : 1);
+    const sn = f.sunTint, ve = f.vel;
+    gl.uniform3f(u.uSunTint, sn ? sn[0] : 1, sn ? sn[1] : 1, sn ? sn[2] : 1); gl.uniform1f(u.uEcl, f.ecl ?? 0); gl.uniform1f(u.uMega, f.mega ?? 0);
+    gl.uniform3f(u.uVel, ve ? ve[0] : 0, ve ? ve[1] : 0, ve ? ve[2] : 0); gl.uniform1f(u.uCombat, f.combat ?? 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3); this.drawCalls++;
 
     // ---- glow sprites (additive, alpha channel untouched)
@@ -285,6 +306,7 @@ export class Renderer {
     gl.uniform2i(a.uCells, this.cols, this.rows); gl.uniform2i(a.uOrigin, this.ox, this.oy); gl.uniform2i(a.uCellPx, this.cwPx, this.chPx);
     gl.uniform1f(a.uExposure, st.exposure); gl.uniform1f(a.uDither, st.dither); gl.uniform1f(a.uBgK, st.bgK);
     gl.uniform1f(a.uFgBase, st.fgBase); gl.uniform1f(a.uFgGain, st.fgGain); gl.uniform1f(a.uTime, f.time);
+    gl.uniform1f(a.uBgMax, 0.3); gl.uniform3f(a.uReveal, f.reveal ?? -1, 4, f.reveal !== undefined && f.reveal >= 0 ? 1 : 0); gl.uniform1i(a.uLayers, f.layers ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3); this.drawCalls++;
 
     // ---- pass 3: instanced glyphs (entities, particles, HUD)

@@ -1,8 +1,8 @@
 import { TAU, hash2 } from '../core/util';
 import { settings } from '../core/config';
 import { DT, Kind, MAX_B, MAX_E, MAX_P, MAX_M, MAX_R, MAX_S, PK, Sim } from '../sim/sim';
-import { PLANET_STRIDE, gravReach, sectorOf } from '../sim/world';
-import { gi } from './atlas';
+import { PLANET_STRIDE, designation, gravReach, sectorOf } from '../sim/world';
+import { gi, glyphOfCode } from './atlas';
 import { Spr } from './batch';
 import type { Renderer } from './renderer';
 
@@ -15,7 +15,7 @@ const G = {
   dot: gi('·'), dotA: gi('.'), colon: gi(':'), plus: gi('+'), star: gi('*'), eq: gi('='), hash: gi('#'), at: gi('@'),
   pct: gi('%'), amp: gi('&'), x: gi('x'), tri: gi('▲'), ring: gi('○'), disc: gi('●'), dia: gi('◆'), full: gi('█'), light: gi('░'),
   tl: gi('╔'), tr: gi('╗'), bl: gi('╚'), br: gi('╝'), h2: gi('═'), v2: gi('║'), pipe: gi('|'), dash: gi('-'), sl: gi('/'), bs: gi('\\'),
-  lb: gi('['), rb: gi(']'),
+  lb: gi('['), rb: gi(']'), o: gi('o'), bul: gi('•'),
 };
 const LINE8 = [G.dash, G.sl, G.pipe, G.bs, G.dash, G.sl, G.pipe, G.bs];
 const DEBRIS = [G.pct, G.amp, G.hash, G.eq, G.x];
@@ -33,7 +33,13 @@ const PAL = new Float32Array([
   1.35, 0.90, 0.20,   // Amber
 ]);
 const GRAY3 = 12;
-const EVT_NAME = ['', 'COMET INBOUND', 'METEOR SHOWER', 'SOLAR FLARE', 'ION STORM'];
+/** The player's accent colour: nothing else on screen uses it. */
+const ACCENT = [0.3, 2.0, 1.35];
+/** Nose / tail distances (world units) per entity kind for the heading marks; null = no heading. */
+const NOSE: ([number, number] | null)[] = [null, [6.5, 4.6], [9.8, 8.7], [7.8, 7.6], null, null, null, [19, 21], [10, 7.4], [5, 5.5], [6, 7.8], [6.6, 5.2], [8.4, 9.7], null, [8.4, 9.7], [2.5, 2]];
+/** Player hull nose / tail by sprite art id. */
+const PNOSE: Record<number, [number, number]> = { 0: [10.8, 7.9], 14: [10.8, 9.2], 15: [9.7, 8.6], 16: [6.5, 11.6], 17: [8.6, 10.3], 18: [6.5, 2.2], 19: [7.6, 7.2], 20: [5.5, 8.4] };
+const EVT_NAME = ['', 'COMET INBOUND', 'METEOR SHOWER', 'SOLAR FLARE', 'ION STORM', 'ECLIPSE', 'MEGASTRUCTURE IN VIEW'];
 const OBJ_LABEL = ['HOSTILES', 'SCRAP', 'ASTEROIDS', 'SECONDS', 'DEFEND STATION (STAY CLOSE)', 'ESCORT THE FREIGHTER (STAY CLOSE)'];
 const WAVES = ['CALM', 'BUILDING', 'PEAK', 'LULL'];
 
@@ -41,9 +47,9 @@ function dir8(a: number): number { return ((Math.round(a / (Math.PI / 4)) % 8) +
 
 const HINT = 'W / ^  THRUST      A D / < >  TURN      S  BRAKE      SPACE  FIRE      SHIFT  BOOST';
 const TITLE = 'A S T E R I O N';
-const BOX_TOP = '╔════════════════════════════╗';
-const BOX_MID = '║                            ║';
-const BOX_BOT = '╚════════════════════════════╝';
+const BOX_TOP = '╔══════════════════════════════════╗';
+const BOX_MID = '║                                  ║';
+const BOX_BOT = '╚══════════════════════════════════╝';
 const LOST = 'S I G N A L   L O S T';
 const RELAUNCH = 'R / ENTER  RELAUNCH      C  COPY RESULT';
 
@@ -85,11 +91,15 @@ export class FrameBuilder {
     this.camX = camX; this.camY = camY; this.alpha = alpha;
     this.cols = r.cols; this.rows = r.rows; this.asp = r.aspect;
     this.sprites(time);
-    this.scraps(time);
     this.dust(time);
     this.particles();
     this.rings();
+    this.scanView();
+    this.marks(time);
+    this.scraps(time);
     this.lifeEnts(time);
+    this.discoveries(time);
+    if (this.showLayers) this.layersLegend();
     if (showHud) this.hud(time);
   }
 
@@ -208,16 +218,116 @@ export class FrameBuilder {
       sp.add(x, y, s.mang[m], 6, Spr.Bolt, 0, 0, settings.cb ? 1 : 0, 1.1);
       gl.add(x, y, 5, 0.9, 0.5, 0.12);
     }
-    // bolts on top
+  }
+
+  // ------------------------------------------------------------------ readability marks: bolts, dark halos, nose + tail on every ship
+  /** Blank dark cells around a point so bolts / pickups never blend into the backdrop. */
+  private halo(cx: number, cy: number): void {
+    const b = this.r.glyphs; cx = Math.floor(cx); cy = Math.floor(cy);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) b.put(cx + dx, cy + dy, 0, 0, 0, 0, 1);
+  }
+  private marks(time: number): void {
+    const s = this.sim, b = this.r.glyphs, back = DT * (1 - this.alpha), cb = settings.cb;
+    // halos first, so the marks below sit in clean black cells
     for (let i = 0; i < MAX_B; i++) {
       if (s.blife[i] <= 0) continue;
       const x = s.bx[i] - s.bvx[i] * back, y = s.by[i] - s.bvy[i] * back;
-      if (!this.visible(x, y, 6)) continue;
-      const a = Math.atan2(s.bvy[i], s.bvx[i]);
-      const cb = settings.cb ? 1 : 0;
-      if (s.bown[i] === 0) { sp.add(x, y, a, 4, Spr.Bolt, 0, 0, cb, 0.8); if (cb) gl.add(x, y, 4.5, 0.05, 0.2, 0.6); else gl.add(x, y, 4.5, 0.55, 0.07, 0.05); }
-      else { sp.add(x, y, a, 3.5, Spr.EBolt, 0, 0, cb, 0.8); if (cb) gl.add(x, y, 4.5, 0.6, 0.3, 0.04); else gl.add(x, y, 4.5, 0.08, 0.5, 0.12); }
+      this.halo(this.cx(x), this.cy(y));
     }
+    for (let i = 0; i < MAX_S; i++) if (s.scl[i] > 0) this.halo(this.cx(s.scx[i]), this.cy(s.scy[i]));
+    // player bolts: two cells, one bright colour; enemy bolts: a different glyph and hue that blinks slowly
+    for (let i = 0; i < MAX_B; i++) {
+      if (s.blife[i] <= 0) continue;
+      const x = s.bx[i] - s.bvx[i] * back, y = s.by[i] - s.bvy[i] * back;
+      const cx = this.cx(x), cy = this.cy(y);
+      if (cx < -2 || cx > this.cols + 2 || cy < -2 || cy > this.rows + 2) continue;
+      if (s.bown[i] === 0) {
+        const a = Math.atan2(s.bvy[i] / this.asp, s.bvx[i]), g = LINE8[dir8(a)], l = Math.hypot(s.bvx[i], s.bvy[i] / this.asp) + 1e-6;
+        const r = cb ? 0.4 : 2.2, gg = cb ? 1.2 : 0.45, bb = cb ? 2.4 : 0.25;
+        b.put(cx, cy, g, r, gg, bb, 1);
+        b.put(cx - s.bvx[i] / l, cy - s.bvy[i] / this.asp / l, g, r * 0.7, gg * 0.7, bb * 0.7, 1);
+      } else {
+        const k = 0.6 + 0.4 * Math.sin(time * 5 + i);
+        b.put(cx, cy, G.o, (cb ? 2.0 : 0.35) * k, (cb ? 1.3 : 1.9) * k, (cb ? 0.2 : 0.45) * k, 1);
+      }
+    }
+    // heading: bright nose glyph + flickering tail on every ship
+    const flick = (time * 14) & 1;
+    for (let i = 0; i < MAX_E; i++) {
+      const k = s.ek[i], n = NOSE[k];
+      if (!n) continue;
+      const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back, ca = Math.cos(s.ea[i]), sa = Math.sin(s.ea[i]);
+      if (!this.visible(x, y, 30)) continue;
+      const neutral = k === Kind.Hauler || k === Kind.Freighter, friend = k === Kind.Wing;
+      const r = friend ? 0.3 : neutral ? 1.6 : 2.0, g = friend ? 1.9 : neutral ? 1.1 : cb ? 1.2 : 0.35, bb = friend ? 1.3 : neutral ? 0.3 : 0.2;
+      b.put(this.cx(x + ca * n[0]), this.cy(y + sa * n[0]), G.bul, r, g, bb, 1);
+      if (Math.hypot(s.evx[i], s.evy[i]) > 8) b.put(this.cx(x - ca * n[1]), this.cy(y - sa * n[1]), flick ? G.colon : G.dotA, r * 0.5, g * 0.5, bb * 0.5, 0);
+    }
+    if (s.alive) {
+      const al = this.alpha, x = s.spx + (s.sx - s.spx) * al, y = s.spy + (s.sy - s.spy) * al;
+      let da = s.sa - s.spa; da = Math.atan2(Math.sin(da), Math.cos(da));
+      const a = s.spa + da * al, ca = Math.cos(a), sa = Math.sin(a), n = PNOSE[s.ship.art] ?? PNOSE[0];
+      const fade = s.ship.darkSig < 1 ? 1 - 0.75 * this.dark : 1;
+      b.put(this.cx(x + ca * n[0]), this.cy(y + sa * n[0]), G.bul, ACCENT[0] * fade, ACCENT[1] * fade, ACCENT[2] * fade, 1);
+      if (s.thrusting) b.put(this.cx(x - ca * n[1]), this.cy(y - sa * n[1]), flick ? G.colon : G.dotA, ACCENT[0] * 0.5 * fade, ACCENT[1] * 0.5 * fade, ACCENT[2] * 0.5 * fade, 0);
+    }
+  }
+
+  // ------------------------------------------------------------------ discovery names, scan view, layer legend
+  private named = new Set<number>(); private nameKey = -1; private nameT = 0; private nameStr = ''; private nameX = 0; private nameY = 0; private nameR = 0;
+  /** First sight of a body prints its catalogue designation in the sky, letter by letter. */
+  private discoveries(time: number): void {
+    const s = this.sim;
+    for (let k = 0; k < s.nPl; k++) {
+      const o = k * PLANET_STRIDE, x = s.pl[o], y = s.pl[o + 1], R = s.pl[o + 2];
+      const key = (Math.round(x) * 73856093) ^ (Math.round(y / 8) * 19349663);
+      if (this.named.has(key) || Math.hypot(x - this.camX, y - this.camY) - R > this.cols * 0.45) continue;
+      this.named.add(key); this.nameKey = key; this.nameT = time; this.nameStr = this.designate(x, y, R); this.nameX = x; this.nameY = y; this.nameR = R;
+      break;
+    }
+    const age = time - this.nameT;
+    if (this.nameKey === -1 || age > 6) return;
+    for (let k = 0; k < s.nPl; k++) { const o = k * PLANET_STRIDE; if (Math.abs(s.pl[o + 2] - this.nameR) < 0.01) { this.nameX = s.pl[o]; this.nameY = s.pl[o + 1]; } }
+    const n = Math.min(this.nameStr.length, Math.floor(age * 18)), fade = Math.min(1, (6 - age) / 1.5);
+    const row = Math.round(this.rows - 1 - this.cy(this.nameY + this.nameR + 6)), col = Math.round(this.cx(this.nameX)) - (this.nameStr.length >> 1);
+    const rr = Math.max(8, Math.min(this.rows - 10, row)), cc = Math.max(2, Math.min(this.cols - this.nameStr.length - 2, col));
+    this.r.glyphs.text(this.nameStr.slice(0, n), cc, rr, 0.5 * fade, 1.3 * fade, 1.1 * fade, 2);
+    if (n < this.nameStr.length && Math.sin(time * 20) > 0) this.r.glyphs.text('_', cc + n, rr, 0.5, 1.3, 1.1, 2);
+  }
+  designate: (x: number, y: number, r: number) => string = (x, y, r) => designation(x, y, r);
+
+  /** Scan view: a scanned body's glyphs rewrite into its data strings for a moment (planet index `k`, envelope 0..1). */
+  scanX = 0; scanY = 0; scanR = 0; scanEnv = 0; scanText = '';
+  /** Planets in view (set by main each frame) and the index of the scan target among them (-1 none). */
+  view: Float32Array = new Float32Array(0); nView = 0; scanIdx = -1;
+  private scanView(): void {
+    this.scanIdx = -1;
+    if (this.scanEnv <= 0 || this.scanText.length === 0 || this.scanR === 0) return;
+    let best = 1e9;
+    for (let i = 0; i < this.nView; i++) {
+      const o = i * PLANET_STRIDE, d = this.scanR < 0 ? Math.hypot(this.view[o] - this.camX, this.view[o + 1] - this.camY) - this.view[o + 2]   // debug: nearest body
+        : Math.abs(this.view[o + 2] - this.scanR) * 100 + Math.hypot(this.view[o] - this.scanX, this.view[o + 1] - this.scanY);
+      if (d < best && (this.scanR < 0 || d < this.scanR * 3 + 40)) { best = d; this.scanIdx = i; }
+    }
+    if (this.scanIdx < 0) return;
+    const o = this.scanIdx * PLANET_STRIDE, px = this.view[o], py = this.view[o + 1], R = this.view[o + 2], b = this.r.glyphs, txt = this.scanText, L = txt.length;
+    this.scanX = px; this.scanY = py; this.scanR = R;
+    const c0 = Math.max(0, Math.floor(this.cx(px - R))), c1 = Math.min(this.cols - 1, Math.ceil(this.cx(px + R)));
+    const r0 = Math.max(0, Math.floor(this.cy(py - R))), r1 = Math.min(this.rows - 1, Math.ceil(this.cy(py + R)));
+    const e = this.scanEnv;
+    for (let cy = r0; cy <= r1; cy++) for (let cx = c0; cx <= c1; cx++) {
+      const wx = cx + 0.5 - this.cols * 0.5 + this.camX - px, wy = (cy + 0.5 - this.rows * 0.5) * this.asp + this.camY - py;
+      const d = Math.sqrt(wx * wx + wy * wy) / R;
+      if (d > 1 || hash2(cx, cy) > e * 1.3) continue;
+      const ch = txt.charCodeAt(((cy * 7 + cx) % L + L) % L), k2 = 0.5 + 0.8 * (1 - d) * e;
+      b.put(cx, cy, glyphOfCode(ch), 0.35 * k2, 1.3 * k2, 1.1 * k2, 0);
+    }
+  }
+
+  showLayers = false;
+  private layersLegend(): void {
+    const lines = ['LAYER GLYPH BUDGET', 'BACKGROUND  . , : ;   (DIM ONLY)  BLUE', 'BODIES      ~ - = # % : . * \' @ * +  GREEN', 'SHIPS       SHAPE-MATCHED, HEAVY  RED', 'BOLTS       PLAYER - / | \\  ENEMY o', 'PLAYER      ACCENT • (MINT)'];
+    for (let i = 0; i < lines.length; i++) this.r.glyphs.text(lines[i], 2, 8 + i, 0.8, 1.2, 1.0, 1);
   }
 
   private dark = 0; private arm = 0; private bay = 0;
@@ -366,15 +476,16 @@ export class FrameBuilder {
   }
 
   // ------------------------------------------------------------------ HUD
-  private bar(label: string, v: number, row: number, r: number, g: number, b: number): void {
-    const bt = this.r.glyphs, w = 14, filled = Math.max(0, Math.min(w, Math.round(v * w)));
-    bt.text(label, 3, row, 0.45, 0.6, 0.7);
+  /** HUD bar in bright # and dim . cells (w cells wide). */
+  private bar(label: string, v: number, row: number, r: number, g: number, b: number, w = 24): void {
+    const bt = this.r.glyphs, filled = Math.max(0, Math.min(w, Math.round(v * w)));
+    bt.text(label, 3, row, 0.5, 0.7, 0.8);
     const x0 = 3 + label.length + 1, cy = this.rows - 1 - row;
     bt.put(x0 - 1, cy, G.lb, 0.3, 0.5, 0.6, 1);
     bt.put(x0 + w, cy, G.rb, 0.3, 0.5, 0.6, 1);
     for (let i = 0; i < w; i++) {
       const on = i < filled;
-      bt.put(x0 + i, cy, on ? G.full : G.light, on ? r : 0.12, on ? g : 0.16, on ? b : 0.2, 1);
+      bt.put(x0 + i, cy, on ? G.hash : G.dotA, on ? r : 0.16, on ? g : 0.22, on ? b : 0.28, 1);
     }
   }
 
@@ -396,13 +507,15 @@ export class FrameBuilder {
     const s = this.sim, bt = this.r.glyphs, cols = this.cols, rows = this.rows;
     this.refreshHud(time);
     bt.text(BOX_TOP, 1, 0, 0.25, 0.5, 0.65);
-    for (let r = 1; r <= 4; r++) bt.text(BOX_MID, 1, r, 0.25, 0.5, 0.65);
-    bt.text(BOX_BOT, 1, 5, 0.25, 0.5, 0.65);
-    const hpv = s.hp / s.hpMax;
-    this.bar('HULL ', hpv, 1, hpv > 0.5 ? 0.3 : 1.4, hpv > 0.25 ? 1.2 : 0.35, 0.45);
-    this.bar('BOOST', s.boostE / s.boostMax, 2, 0.3, 0.9, 1.5);
-    bt.text(this.sStat1, 3, 3, 0.55, 0.8, 0.9);
-    bt.text(this.sStat2, 3, 4, 0.55, 0.8, 0.9);
+    for (let r = 1; r <= 6; r++) bt.text(BOX_MID, 1, r, 0.25, 0.5, 0.65);
+    bt.text(BOX_BOT, 1, 7, 0.25, 0.5, 0.65);
+    const hpv = s.hp / s.hpMax, sm = s.ship.shieldMax;
+    this.bar('HULL ', hpv, 1, hpv > 0.5 ? 0.4 : 1.8, hpv > 0.25 ? 1.7 : 0.4, 0.5);
+    this.bar('BOOST', s.boostE / s.boostMax, 2, 0.4, 1.2, 2.0);
+    if (sm > 0) this.bar('SHLD ', s.storm > 0.3 ? 0 : s.shield / sm, 3, 0.5, 0.8, 1.9, 12);
+    this.bar(s.overheat ? 'HEAT!' : 'HEAT ', s.heat / s.ship.heatMax, 4, s.overheat ? 2.0 : 1.4, s.overheat ? 0.3 : 0.7, 0.2, 12);
+    bt.text(this.sStat1, 3, 5, 0.55, 0.8, 0.9);
+    bt.text(this.sStat2, 3, 6, 0.55, 0.8, 0.9);
     bt.text(this.sScore, cols - this.sScore.length - 2, 1, 1.4, 1.2, 0.5);
     bt.text(this.sKills, cols - this.sKills.length - 2, 2, 0.8, 0.8, 0.9);
     bt.text(this.sScrap, cols - this.sScrap.length - 2, 3, 1.4, 1.1, 0.3);

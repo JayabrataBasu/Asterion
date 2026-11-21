@@ -22,3 +22,14 @@
 - Save format v2 with a v1 migration (upgrades and best score move to the Wren slot). Per-ship modules and best scores, lifetime stats, options for verticality and the news ticker.
 - Menus are item lists; new key defaults: climb R, dive G, scan Q, cruise Y. Debug: auto-quality Q -> F9. `?state=hangar`, `?unlockall=1`, `?roster=1`.
 - Wren regression trace deliberately re-baselined (Wren gained shields, energy, heat, signature).
+
+## M3 — visual awe pass (strict ASCII)
+- Negative space: far sparser, dimmer stars; nebulae only in ~1 sector in 5 (home is faint), galaxies rarer. Background ramp is capped to the light end of the ramp (glyph budget).
+- Glyph materials: gas `~ - =` flowing, rock `# % :`, ice `. * '`, oceans ripple `~ -`, atmosphere rims in the light family `, : ;`, sun core `@ * +`.
+- Resolve-on-approach: distant bodies render as sparse flat cells; bands, then storms, clouds, cities, lightning and auroras load in as you close.
+- Light: diffraction spikes as rows of `-` and `|`, lens-flare ghost rings along the line through screen centre, the sun is hidden by planets, eclipse coronas, ring shadows across discs.
+- Scan view (planet rewrites into data strings), typed arrivals (scene types itself in from the centre on launch / new sector), catalogue designations typed into the sky on first sight.
+- Set pieces: ringed giant eclipsing the sun (event 5, 45 s), megastructure arc crossing the sky (event 6, 90 s). (Derelict capital hull arrives with the exploration layer in M5.)
+- Speed cues: stars bunch toward the heading and blue/red-shift near top speed; boost streaks; camera zoom steps out at speed and at vistas (cell-size step hidden by a CSS scale tween; atlases cached per size; off with reduced FX).
+- Readability: true dark halo (blank cells) around ships, bolts and pickups; bright nose `•` + flickering tail on every ship, player in a mint accent nothing else uses; player bolts two cells in one colour, enemy bolts `o` in another hue blinking slowly; background thins in fights; larger `#`/`.` HUD bars plus shield and heat; layer debug (`F10` / `?layers=1`).
+- Debug: `?event=eclipse|mega&evt=<0..1>`, `?scanview=1`, `?layers=1`. Golden tool gained `url` and `console` modes.

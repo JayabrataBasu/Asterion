@@ -87,3 +87,11 @@ export function planetsNear(x: number, y: number, range: number, out: Float32Arr
   }
   return n;
 }
+
+const SYL = ['AR', 'BE', 'CA', 'DO', 'EL', 'FA', 'GI', 'HO', 'IR', 'KA', 'LU', 'MO', 'NE', 'OR', 'PA', 'QU', 'RI', 'SA', 'TU', 'VE', 'XA', 'ZO'];
+/** Procedural catalogue designation for a body at (x,y) of radius r (cold path: only on first sight). */
+export function designation(x: number, y: number, r: number): string {
+  const ix = Math.round(x), iy = Math.round(y), h = hash2(ix, iy), h2 = hash2(iy + 7, ix - 3);
+  const num = 100 + Math.floor(hash2(Math.round(x / 3), Math.round(y / 5)) * 8900);
+  return SYL[Math.floor(h * SYL.length)] + SYL[Math.floor(h2 * SYL.length)] + '-' + num + ' ' + (r < 14 ? 'MOON ' + 'ABCD'[Math.floor(h2 * 4)] : 'BCDEFG'[Math.floor(h * 6)]);
+}

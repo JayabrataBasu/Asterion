@@ -53,6 +53,9 @@ function applyHc(): void {
   else if (hcBase) { settings.nebula = hcBase.nebula; settings.bgK = hcBase.bgK; settings.sun = hcBase.sun; hcBase = null; }
 }
 function dailySeed(): number { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
+/** Typed arrival: the scene writes itself in outward from the centre on launch and on first entry to a sector. */
+let revealT = -1;
+function arrive(): void { revealT = 0; }
 /** Bank upgrades, scrap and lifetime stats (deltas since the last bank this run). */
 const banked = { kills: 0, bosses: 0, scrap: 0 };
 function bank(): void {
@@ -70,7 +73,7 @@ function newRun(): void {
   sim.scrap = save.scrap; sim.vert = save.vert;
   sim.hard = save.hard;
   sim.reset(urlSeed !== null ? parseInt(urlSeed, 10) >>> 0 : save.daily ? dailySeed() : (Math.random() * 1e9) >>> 0);
-  fb.hiScore = save.hi; deathHandled = false; lastHp = sim.hp;
+  fb.hiScore = save.hi; deathHandled = false; lastHp = sim.hp; arrive();
 }
 let deathHandled = false;
 newRun();
@@ -290,6 +293,7 @@ function onKey(code: string): void {
     case 'F7': settings.curve = settings.curve > 0 ? 0 : 0.05; say('crt ' + (settings.curve ? 'on' : 'off')); break;
     case 'F8': settings.chroma = settings.chroma > 0 ? 0 : 0.005; say('aberration ' + (settings.chroma ? 'on' : 'off')); break;
     case 'KeyH': settings.hud = !settings.hud; break;
+    case 'F10': layersOn = !layersOn; say('layer debug ' + (layersOn ? 'on' : 'off')); break;
     case 'KeyT': settings.ramp = (settings.ramp + 1) % RAMPS.length; say('ramp: ' + RAMPS[settings.ramp].name); break;
     case 'F9': settings.auto = !settings.auto; if (!settings.auto) { govLevel = 3; applyGov(); } say('auto-quality ' + (settings.auto ? 'on' : 'off')); break;
     case 'BracketLeft': settings.cellCss = Math.min(24, settings.cellCss + 1); snapBase(); resize(); say('cell ' + settings.cellCss + 'px'); break;
@@ -413,7 +417,7 @@ function pollInput(): number {
   for (let i = 0; i < ff * 60; i++) { sim.input = demo ? autopilot() : 0; sim.step(); if (!sim.alive && sim.deadT > 1) sim.reset(5); }
   if (q.has('unlockall')) { save.unlocked = UNLOCKS.map(u => u.id); }
   const qs = q.get('state'); if (qs === 'shop' || qs === 'pause' || qs === 'controls' || qs === 'map' || qs === 'hangar' || qs === 'chart' || qs === 'logs') { state = qs; sim.scrap = 140; }
-  if (q.has('event')) { sim.triggerEvent(Math.min(4, Math.max(0, ({ comet: 1, meteors: 2, flare: 3, storm: 4 } as Record<string, number>)[q.get('event')!] ?? (parseInt(q.get('event')!, 10) | 0)))); sim.warnT = parseFloat(q.get('evwarn') ?? '0.05'); }
+  if (q.has('event')) { sim.triggerEvent(Math.min(6, Math.max(0, ({ comet: 1, meteors: 2, flare: 3, storm: 4, eclipse: 5, mega: 6 } as Record<string, number>)[q.get('event')!] ?? (parseInt(q.get('event')!, 10) | 0)))); sim.warnT = parseFloat(q.get('evwarn') ?? '0.05'); }
   if (q.has('hp')) sim.hp = parseFloat(q.get('hp')!);
   const spawn = q.get('spawn');
   if (spawn) {
@@ -426,6 +430,8 @@ function pollInput(): number {
   if (q.has('obj')) { sim.objTier = parseInt(q.get('obj')!, 10) | 0; sim.objKills = 0; sim.step(); }
   if (q.has('hud') && q.get('hud') === '0') settings.hud = false;
   if (q.has('perf')) { settings.perf = true; perf.show(true); }
+  if (q.has('evt')) sim.debugEvtP = parseFloat(q.get('evt')!);
+  if (q.has('scanview')) { fb.scanR = -1; fb.scanEnv = 1; fb.scanText = 'T=184K  CH4 62% H2 31% NH3 5%  MASS 4.1E26 KG  RINGS: ICE  '; }
   if (q.has('ship')) sim.setShip(shipById(q.get('ship')!));
   if (q.has('tune')) mountTuner(sim, id => sim.setShip(shipById(id)));
 }
@@ -467,6 +473,38 @@ function updateTint(dt: number, x: number, y: number): void {
   const k = 1 - Math.exp(-0.8 * dt);
   for (let i = 0; i < 3; i++) tint[i] += (th[i] - tint[i]) * k;
 }
+/** Negative space: most sectors are nearly empty; a few hold a nebula. Smoothed like the tint. */
+let nebAmt = 0.35;
+function updateNeb(dt: number, x: number, y: number): void {
+  const sx = sectorOf(x), sy = sectorOf(y);
+  const want = sx === 0 && sy === 0 ? 0.35 : hash2(sx * 31 + 7, sy * 17 + 3) > 0.8 ? 1.0 : 0.08;
+  nebAmt += (want - nebAmt) * (1 - Math.exp(-0.5 * dt));
+}
+/** Camera zoom linked to speed and vistas: one cell-size step, hidden by a CSS scale tween (glyphs stay glyphs). */
+let zoomLvl = 0, zoomWant = 0, zoomHold = 0, zoomTw = 0, zoomFrom = 1, zoomTo = 1, zoomPending = -1;
+function updateZoom(dt: number, spd: number): void {
+  if (settings.reduceFx) { zoomWant = 0; }
+  else {
+    let vista = sim.ecl > 0 || sim.mega > 0;
+    for (let k = 0; k < sim.nPl && !vista; k++) { const o = k * PLANET_STRIDE, r = sim.pl[o + 2]; if (r > 60 && Math.hypot(sim.pl[o] - sim.sx, sim.pl[o + 1] - sim.sy) < r + 160) vista = true; }
+    const want = (sim.boosting && spd > 150) || vista ? 1 : 0;
+    zoomHold = want === zoomWant ? 0 : zoomHold + dt;
+    if (zoomHold > (want ? 1.0 : 2.5)) { zoomWant = want; zoomHold = 0; }
+  }
+  if (zoomTw <= 0 && zoomWant !== zoomLvl) {
+    const base = settings.cellCss, cur = base - zoomLvl, nxt = base - zoomWant;
+    if (nxt < cur) { zoomLvl = zoomWant; renderer.zoomCss = zoomLvl; resize(); zoomFrom = cur / nxt; zoomTo = 1; zoomTw = 0.6; zoomPending = -1; }
+    else { zoomFrom = 1; zoomTo = nxt / cur; zoomTw = 0.6; zoomPending = zoomWant; }
+  }
+  if (zoomTw > 0) {
+    zoomTw = Math.max(0, zoomTw - dt);
+    const u = 1 - zoomTw / 0.6, e = u * u * (3 - 2 * u);
+    canvas.style.transform = 'scale(' + (zoomFrom + (zoomTo - zoomFrom) * e).toFixed(4) + ')';
+    if (zoomTw === 0) { if (zoomPending >= 0) { zoomLvl = zoomPending; renderer.zoomCss = zoomLvl; resize(); zoomPending = -1; } canvas.style.transform = ''; }
+  }
+}
+let layersOn = new URLSearchParams(location.search).has('layers');
+const scanHold = new URLSearchParams(location.search).has('scanview');
 function nearHostile(): boolean {
   for (let i = 0; i < MAX_E; i++) {
     const k = sim.ek[i]; if (k < 1 || k > 3) continue;
@@ -500,6 +538,7 @@ function drawMap(): void {
 }
 
 const warp = new Float32Array(24);
+const velBuf: [number, number, number] = [0, 0, 0];
 /** Screen-space distortion sources: expanding shock rings from explosions and heat shimmer behind the player's engines. */
 function buildWarp(cx: number, cy: number, fx: number): Float32Array {
   warp.fill(0);
@@ -539,7 +578,8 @@ function frame(now: number): void {
     lastHp = sim.hp;
     if (!sim.alive && !deathHandled) { deathHandled = true; if (sim.score > save.hi) { save.hi = sim.score; } save.hiBy[save.ship] = Math.max(save.hiBy[save.ship] ?? 0, sim.score); bank(); }
     tutorial(dt);
-    visited.add(((sectorOf(sim.sx) & 0xffff) << 16) | (sectorOf(sim.sy) & 0xffff));
+    const vk = ((sectorOf(sim.sx) & 0xffff) << 16) | (sectorOf(sim.sy) & 0xffff);
+    if (!visited.has(vk)) { visited.add(vk); if (sim.time > 1) arrive(); }
   } else if (attract) {
     sim.input = autopilot(); sim.aimOn = false;
     while (acc >= DT) { sim.step(); acc -= DT; }
@@ -565,10 +605,12 @@ function frame(now: number): void {
 
   // dim the backdrop while hostiles are engaged so ships/bolts read clearly
   combat += ((sim.alive && sim.nEnemy > 0 && nearHostile() ? 1 : 0) - combat) * (1 - Math.exp(-1.5 * dt));
-  updateTint(dt, cx, cy);
+  updateTint(dt, cx, cy); updateNeb(dt, cx, cy);
   renderer.beginFrame();
   fb.showReticle = !demo;
-  fb.fx = settings.reduceFx ? 0.35 : 1;
+  fb.fx = settings.reduceFx ? 0.35 : 1; fb.showLayers = layersOn;
+  const np = planetsNear(cx, cy, renderer.cols * 0.5 + 80, view, sim.time + alpha * DT);
+  fb.view = view; fb.nView = np;
   fb.build(cx, cy, alpha, t, settings.hud && state !== 'menu' && state !== 'hangar' && state !== 'logs' && state !== 'chart');
   if (rosterView) drawRoster(cx, cy, t);
   if (state !== 'play') {
@@ -584,11 +626,15 @@ function frame(now: number): void {
     }
   }
   if (toastT > 0) { toastT -= dt; renderer.glyphs.text(toast, 2, renderer.rows - 2, 1.2, 1.2, 0.6, 1); }
-  const np = planetsNear(cx, cy, renderer.cols * 0.5 + 80, view, sim.time + alpha * DT);
   const spd = Math.sqrt(sim.svx * sim.svx + sim.svy * sim.svy);
   const streak = Math.max(0, Math.min(1, (spd - 85) / 60));
   const fxk = settings.reduceFx ? 0.35 : 1;
-  renderer.render({ camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
+  updateZoom(dt, spd);
+  if (revealT >= 0) { revealT += dt * (settings.reduceFx ? 2 : 1); if (revealT * 240 > renderer.cols + renderer.rows * 2) revealT = -1; }
+  if (fb.scanEnv > 0 && state === 'play' && sim.scanP <= 0 && !scanHold) fb.scanEnv = Math.max(0, fb.scanEnv - dt * 0.5);
+  const vl = Math.hypot(sim.svx, sim.svy / renderer.aspect) + 1e-6;
+  velBuf[0] = sim.svx / vl; velBuf[1] = sim.svy / renderer.aspect / vl; velBuf[2] = Math.max(0, Math.min(1, (spd - 110) / 80)) * fxk;
+  renderer.render({ neb: nebAmt, ecl: sim.ecl, mega: sim.mega, vel: velBuf, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: Math.max(sim.hitFlash * fxk, sim.alive && sim.hp < 30 ? 0.22 + 0.16 * Math.sin(t * 7) * fxk : 0),
     streakX: sim.svx, streakY: sim.svy, streak, combat, tint, flare: sim.flare * fxk, storm: sim.storm * fxk, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 
