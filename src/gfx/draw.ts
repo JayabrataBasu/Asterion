@@ -1,6 +1,6 @@
 import { TAU, hash2 } from '../core/util';
 import { settings } from '../core/config';
-import { DT, Kind, MAX_B, MAX_E, MAX_P, MAX_M, MAX_R, MAX_S, PK, Sim } from '../sim/sim';
+import { BAND_NAME, DT, Kind, V_TOL, MAX_B, MAX_E, MAX_P, MAX_M, MAX_R, MAX_S, PK, Sim } from '../sim/sim';
 import { PLANET_STRIDE, designation, gravReach, sectorOf } from '../sim/world';
 import { gi, glyphOfCode } from './atlas';
 import { Spr } from './batch';
@@ -69,6 +69,41 @@ export class FrameBuilder {
   private cx(wx: number): number { return wx - this.camX + this.cols * 0.5; }
   private cy(wy: number): number { return (wy - this.camY) / this.asp + this.rows * 0.5; }
   /** Planet shadow: objects behind a planet (opposite the sun) are darkened, matching the planet shader's light direction. */
+  // ------------------------------------------------------------------ verticality (M4): oblique offset, band dimming, shadows
+  /** World-units of screen lift per band (oblique projection). */
+  static readonly OBL = 6;
+  /** Player's interpolated altitude this frame. */
+  private pz = 0;
+  zoff = 0; bandF = 1;
+  private zy(z: number): number { return this.sim.vert ? z * FrameBuilder.OBL : 0; }
+  /** Set the altitude of the entity about to be drawn: screen lift, sprite sort key, and dimming when it is on another band. */
+  private zE(z: number): void {
+    const s = this.sim;
+    if (!s.vert) { this.zoff = 0; this.bandF = 1; this.r.sprites.z = 0; return; }
+    this.zoff = z * FrameBuilder.OBL; this.r.sprites.z = z;
+    this.bandF = (Math.abs(z - this.pz) <= V_TOL ? 1 : 0.38) * (0.85 + 0.15 * z);
+  }
+  /** Shadow '.' on the Low-band ground plane and a ':' stalk up to the craft, for everything above the ground. */
+  private stalk(x: number, y: number, z: number, own: boolean): void {
+    if (z < -0.95) return;
+    const b = this.r.glyphs, cx = this.cx(x), g0 = this.cy(y - FrameBuilder.OBL), g1 = this.cy(y + z * FrameBuilder.OBL);
+    if (cx < 0 || cx >= this.cols) return;
+    const k = own ? 0.5 : 0.28;
+    b.put(cx, g0, G.dotA, 0.25 * k + 0.05, 0.3 * k + 0.05, 0.35 * k + 0.05, 0);
+    for (let r = Math.ceil(g0 + 1); r < g1 - 1.5; r++) b.put(cx, r, G.colon, 0.18 * k, 0.24 * k, 0.3 * k, 0);
+  }
+  private shadows(): void {
+    const s = this.sim;
+    if (!s.vert) return;
+    for (let i = 0; i < MAX_E; i++) {
+      const k = s.ek[i];
+      if (k === Kind.None || k === Kind.Station || k === Kind.Mine || k === Kind.Comet) continue;
+      if (k === Kind.Asteroid && s.er[i] < 3) continue;
+      if (this.visible(s.ex[i], s.ey[i], 20)) this.stalk(s.ex[i], s.ey[i], s.ez[i], false);
+    }
+    if (s.alive) { const al = this.alpha; this.stalk(s.spx + (s.sx - s.spx) * al, s.spy + (s.sy - s.spy) * al, this.pz, true); }
+  }
+
   private shade(x: number, y: number): number {
     const s = this.sim; let f = 1;
     for (let k = 0; k < s.nPl; k++) {
@@ -79,7 +114,7 @@ export class FrameBuilder {
       const sh = 1 - 0.75 * Math.min(1, Math.max(0, (R * 1.05 - perp) / (R * 0.35)));
       if (sh < f) f = sh;
     }
-    return f;
+    return f * this.bandF;
   }
   private visible(wx: number, wy: number, size: number): boolean {
     const cx = this.cx(wx), cy = this.cy(wy);
@@ -90,7 +125,11 @@ export class FrameBuilder {
     const r = this.r;
     this.camX = camX; this.camY = camY; this.alpha = alpha;
     this.cols = r.cols; this.rows = r.rows; this.asp = r.aspect;
+    this.pz = this.sim.spz + (this.sim.sz - this.sim.spz) * alpha;
+    this.shadows();
     this.sprites(time);
+    if (this.sim.vert) this.r.sprites.sortByZ();
+    this.r.sprites.z = 0; this.zoff = 0; this.bandF = 1;
     this.dust(time);
     this.particles();
     this.rings();
@@ -110,7 +149,7 @@ export class FrameBuilder {
     for (let i = 0; i < MAX_E; i++) {
       const k = s.ek[i];
       if (k !== Kind.Asteroid && k !== Kind.Station) continue;
-      const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back;
+      this.zE(s.ez[i]); const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back + this.zoff;
       if (k === Kind.Station) {
         if (this.visible(x, y, 24)) sp.add(x, y, 0, 24, Spr.Station, s.eseed[i], 0, 0, 0.75, this.shade(x, y));
       } else {
@@ -120,7 +159,7 @@ export class FrameBuilder {
     }
     for (let i = 0; i < MAX_E; i++) {
       if (s.ek[i] !== Kind.Mine) continue;
-      const x = s.ex[i], y = s.ey[i];
+      this.zE(s.ez[i]); const x = s.ex[i], y = s.ey[i] + this.zoff;
       if (!this.visible(x, y, 8)) continue;
       const armed = s.et[i] > 1.0;
       sp.add(x, y, 0, 5, Spr.Mine, s.eseed[i], 0, armed ? 1 : 0, 0.8);
@@ -129,7 +168,7 @@ export class FrameBuilder {
     }
     for (let i = 0; i < MAX_E; i++) {
       if (s.ek[i] !== Kind.Freighter) continue;
-      const x = s.ex[i], y = s.ey[i];
+      this.zE(s.ez[i]); const x = s.ex[i], y = s.ey[i] + this.zoff;
       if (this.visible(x, y, 22)) {
         const f = s.eflash[i] > 0 ? s.eflash[i] * 0.7 : 0;
         sp.add(x, y, s.ea[i], 22, Spr.Tender, s.eseed[i], f, 0.5, 0.95, this.shade(x, y));
@@ -141,7 +180,7 @@ export class FrameBuilder {
     for (let i = 0; i < MAX_E; i++) {
       const k = s.ek[i];
       if (k !== Kind.Drone && k !== Kind.Gunship && k !== Kind.Minelayer && k !== Kind.Boss && k !== Kind.Sniper && k !== Kind.Splitter && k !== Kind.Tender && k !== Kind.Rammer) continue;
-      const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back, a = s.ea[i];
+      this.zE(s.ez[i]); const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back + this.zoff, a = s.ea[i];
       const ch = s.echarge[i] > 0 ? 1 - s.echarge[i] / (k === Kind.Sniper ? 1.0 : 0.5) : 0;           // gunship charge-up 0..1
       const f = Math.max(s.eflash[i] > 0 ? s.eflash[i] * 0.7 : 0, ch * 0.35);
       const sp2 = Math.sqrt(s.evx[i] * s.evx[i] + s.evy[i] * s.evy[i]);
@@ -188,7 +227,7 @@ export class FrameBuilder {
     // player
     if (s.alive && !(s.invuln > 0 && Math.sin(time * 40) > 0)) {
       const al = this.alpha;
-      const x = s.spx + (s.sx - s.spx) * al, y = s.spy + (s.sy - s.spy) * al;
+      this.zE(this.pz); const x = s.spx + (s.sx - s.spx) * al, y = s.spy + (s.sy - s.spy) * al + this.zoff;
       let da = s.sa - s.spa; da = Math.atan2(Math.sin(da), Math.cos(da));
       const a = s.spa + da * al;
       const target = s.thrusting ? (s.boosting ? 1.35 : 0.9) : 0.12;
@@ -206,7 +245,7 @@ export class FrameBuilder {
     } else this.thrS = 0.12;
     for (let i = 0; i < MAX_E; i++) {
       if (s.ek[i] !== Kind.Wing) continue;
-      const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back;
+      this.zE(s.ez[i]); const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back + this.zoff;
       if (!this.visible(x, y, 6)) continue;
       sp.add(x, y, s.ea[i], 5, Spr.Wing, 0, 0, 0.6, 0.9);
       gl.add(x, y, 3, 0.05, 0.4, 0.25);
@@ -231,23 +270,23 @@ export class FrameBuilder {
     // halos first, so the marks below sit in clean black cells
     for (let i = 0; i < MAX_B; i++) {
       if (s.blife[i] <= 0) continue;
-      const x = s.bx[i] - s.bvx[i] * back, y = s.by[i] - s.bvy[i] * back;
+      const x = s.bx[i] - s.bvx[i] * back, y = s.by[i] - s.bvy[i] * back + this.zy(s.bz[i]);
       this.halo(this.cx(x), this.cy(y));
     }
     for (let i = 0; i < MAX_S; i++) if (s.scl[i] > 0) this.halo(this.cx(s.scx[i]), this.cy(s.scy[i]));
     // player bolts: two cells, one bright colour; enemy bolts: a different glyph and hue that blinks slowly
     for (let i = 0; i < MAX_B; i++) {
       if (s.blife[i] <= 0) continue;
-      const x = s.bx[i] - s.bvx[i] * back, y = s.by[i] - s.bvy[i] * back;
+      this.zE(s.bz[i]); const x = s.bx[i] - s.bvx[i] * back, y = s.by[i] - s.bvy[i] * back + this.zoff, bk = this.bandF;
       const cx = this.cx(x), cy = this.cy(y);
       if (cx < -2 || cx > this.cols + 2 || cy < -2 || cy > this.rows + 2) continue;
       if (s.bown[i] === 0) {
         const a = Math.atan2(s.bvy[i] / this.asp, s.bvx[i]), g = LINE8[dir8(a)], l = Math.hypot(s.bvx[i], s.bvy[i] / this.asp) + 1e-6;
-        const r = cb ? 0.4 : 2.2, gg = cb ? 1.2 : 0.45, bb = cb ? 2.4 : 0.25;
+        const r = (cb ? 0.4 : 2.2) * bk, gg = (cb ? 1.2 : 0.45) * bk, bb = (cb ? 2.4 : 0.25) * bk;
         b.put(cx, cy, g, r, gg, bb, 1);
         b.put(cx - s.bvx[i] / l, cy - s.bvy[i] / this.asp / l, g, r * 0.7, gg * 0.7, bb * 0.7, 1);
       } else {
-        const k = 0.6 + 0.4 * Math.sin(time * 5 + i);
+        const k = (0.6 + 0.4 * Math.sin(time * 5 + i)) * bk;
         b.put(cx, cy, G.o, (cb ? 2.0 : 0.35) * k, (cb ? 1.3 : 1.9) * k, (cb ? 0.2 : 0.45) * k, 1);
       }
     }
@@ -256,15 +295,16 @@ export class FrameBuilder {
     for (let i = 0; i < MAX_E; i++) {
       const k = s.ek[i], n = NOSE[k];
       if (!n) continue;
-      const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back, ca = Math.cos(s.ea[i]), sa = Math.sin(s.ea[i]);
+      this.zE(s.ez[i]); const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back + this.zoff, ca = Math.cos(s.ea[i]), sa = Math.sin(s.ea[i]);
       if (!this.visible(x, y, 30)) continue;
       const neutral = k === Kind.Hauler || k === Kind.Freighter, friend = k === Kind.Wing;
-      const r = friend ? 0.3 : neutral ? 1.6 : 2.0, g = friend ? 1.9 : neutral ? 1.1 : cb ? 1.2 : 0.35, bb = friend ? 1.3 : neutral ? 0.3 : 0.2;
+      const r = (friend ? 0.3 : neutral ? 1.6 : 2.0) * this.bandF, g = (friend ? 1.9 : neutral ? 1.1 : cb ? 1.2 : 0.35) * this.bandF, bb = (friend ? 1.3 : neutral ? 0.3 : 0.2) * this.bandF;
       b.put(this.cx(x + ca * n[0]), this.cy(y + sa * n[0]), G.bul, r, g, bb, 1);
       if (Math.hypot(s.evx[i], s.evy[i]) > 8) b.put(this.cx(x - ca * n[1]), this.cy(y - sa * n[1]), flick ? G.colon : G.dotA, r * 0.5, g * 0.5, bb * 0.5, 0);
     }
+    this.zE(0); this.bandF = 1;
     if (s.alive) {
-      const al = this.alpha, x = s.spx + (s.sx - s.spx) * al, y = s.spy + (s.sy - s.spy) * al;
+      const al = this.alpha, x = s.spx + (s.sx - s.spx) * al, y = s.spy + (s.sy - s.spy) * al + this.zy(this.pz);
       let da = s.sa - s.spa; da = Math.atan2(Math.sin(da), Math.cos(da));
       const a = s.spa + da * al, ca = Math.cos(a), sa = Math.sin(a), n = PNOSE[s.ship.art] ?? PNOSE[0];
       const fade = s.ship.darkSig < 1 ? 1 - 0.75 * this.dark : 1;
@@ -445,7 +485,7 @@ export class FrameBuilder {
     for (let i = 0; i < MAX_E; i++) {
       const k = s.ek[i];
       if (k !== Kind.Comet && k !== Kind.Hauler) continue;
-      const x = s.ex[i], y = s.ey[i], a = s.ea[i];
+      this.zE(s.ez[i]); const x = s.ex[i], y = s.ey[i] + this.zoff, a = s.ea[i];
       if (k === Kind.Comet) {
         if (!this.visible(x, y, 40)) continue;
         const ca = Math.cos(a), sa = Math.sin(a);
@@ -515,6 +555,12 @@ export class FrameBuilder {
     if (sm > 0) this.bar('SHLD ', s.storm > 0.3 ? 0 : s.shield / sm, 3, 0.5, 0.8, 1.9, 12);
     this.bar(s.overheat ? 'HEAT!' : 'HEAT ', s.heat / s.ship.heatMax, 4, s.overheat ? 2.0 : 1.4, s.overheat ? 0.3 : 0.7, 0.2, 12);
     bt.text(this.sStat1, 3, 5, 0.55, 0.8, 0.9);
+    if (s.vert) {                                                        // altitude readout + three-notch indicator
+      const b = s.szBand + 1, x0 = 26;
+      bt.text('ALT', x0, 3, 0.5, 0.7, 0.8);
+      for (let n = 0; n < 3; n++) bt.text(n === b ? '#' : '.', x0 + 4 + n * 2, 3, n === b ? ACCENT[0] : 0.25, n === b ? ACCENT[1] : 0.35, n === b ? ACCENT[2] : 0.4);
+      bt.text(BAND_NAME[b], x0, 4, ACCENT[0] * 0.8, ACCENT[1] * 0.8, ACCENT[2] * 0.8);
+    }
     bt.text(this.sStat2, 3, 6, 0.55, 0.8, 0.9);
     bt.text(this.sScore, cols - this.sScore.length - 2, 1, 1.4, 1.2, 0.5);
     bt.text(this.sKills, cols - this.sKills.length - 2, 2, 0.8, 0.8, 0.9);

@@ -33,3 +33,10 @@
 - Speed cues: stars bunch toward the heading and blue/red-shift near top speed; boost streaks; camera zoom steps out at speed and at vistas (cell-size step hidden by a CSS scale tween; atlases cached per size; off with reduced FX).
 - Readability: true dark halo (blank cells) around ships, bolts and pickups; bright nose `•` + flickering tail on every ship, player in a mint accent nothing else uses; player bolts two cells in one colour, enemy bolts `o` in another hue blinking slowly; background thins in fights; larger `#`/`.` HUD bars plus shield and heat; layer debug (`F10` / `?layers=1`).
 - Debug: `?event=eclipse|mega&evt=<0..1>`, `?scanview=1`, `?layers=1`. Golden tool gained `url` and `console` modes.
+
+## M4 — verticality experiment (off by default)
+- Three altitude bands behind `?vert=1` / options toggle; climb R / dive G, gamepad bumpers. Altitude per entity and bolt; collisions are the 2D hash plus a height check.
+- Depth cues in glyphs only: oblique lift, `.` shadow + `:` stalk, off-band dimming, z-sorted sprites, HUD altitude notches.
+- Content: fly over planets at High, atmosphere cover/drag/heat at Low, rings at Mid, asteroid canyons, band-limited storms, band-aware enemy AI.
+- Report with side-by-side screenshots: `docs/VERTICALITY.md`. Not tuned around; awaiting a keep/kill decision.
+- Soak watchdog now asserts no hang (< 500 ms) and a sane average step (< 2 ms) instead of counting wall-clock hiccups.

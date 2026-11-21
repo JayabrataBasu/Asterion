@@ -334,9 +334,11 @@ function pollPad(): { m: number; aim: boolean; ang: number } {
   if (ly > 0.6) out.m |= In.Brake;
   if (lx < -0.3) out.m |= In.Left; else if (lx > 0.3) out.m |= In.Right;
   if (b(0) || b(7)) out.m |= In.Fire;
-  if (b(5) || b(6)) out.m |= In.Boost;
+  if (sim.vert) { if (b(5)) out.m |= In.Climb; if (b(4)) out.m |= In.Dive; if (b(6)) out.m |= In.Boost; if (b(13)) out.m |= In.Missile; }   // bumpers change band
+  else { if (b(5) || b(6)) out.m |= In.Boost; if (b(4)) out.m |= In.Missile; }
   if (b(1)) out.m |= In.Dodge;
-  if (b(4)) out.m |= In.Missile;
+  if (b(10)) out.m |= In.Scan;
+  if (b(11)) out.m |= In.Cruise;
   if (b(14)) out.m |= In.StrafeL;
   if (b(15)) out.m |= In.StrafeR;
   if (b(2)) out.m |= In.Brake;
@@ -394,6 +396,10 @@ function pollInput(): number {
   if (held('missile')) m |= In.Missile;
   if (held('strafeL')) m |= In.StrafeL;
   if (held('strafeR')) m |= In.StrafeR;
+  if (held('climb')) m |= In.Climb;
+  if (held('dive')) m |= In.Dive;
+  if (held('scan')) m |= In.Scan;
+  if (held('cruise')) m |= In.Cruise;
   const pad = pollPad();
   m |= pad.m;
   if (mouseAim && mouseMoved) { if (mouseDown & 1) m |= In.Fire; if (mouseDown & 4) m |= In.Thrust; if (mouseDown & 2) m |= In.Missile; }
@@ -423,7 +429,7 @@ function pollInput(): number {
   if (spawn) {
     const defs: Record<string, number> = { boss: Kind.Boss, sniper: Kind.Sniper, tender: Kind.Tender, splitter: Kind.Splitter, rammer: Kind.Rammer, gunship: Kind.Gunship, drone: Kind.Drone };
     let n = 0;
-    for (const nm of spawn.split(',')) if (defs[nm]) { const e = sim.spawnEnt(defs[nm], sim.sx + 30 + 24 * n, sim.sy + (n & 1 ? 16 : -16), 0, 0); if (e >= 0) { sim.ea[e] = 3.1; sim.es[e] = 0; if (nm === 'gunship') sim.eshield[e] = 8; } n++; }
+    for (const nm of spawn.split(',')) if (defs[nm]) { const e = sim.spawnEnt(defs[nm], sim.sx + 30 + 24 * n, sim.sy + (n & 1 ? 16 : -16), 0, 0); if (e >= 0) { sim.ea[e] = 3.1; sim.es[e] = 0; if (nm === 'gunship') sim.eshield[e] = 8; if (sim.vert) sim.ez[e] = sim.eband[e] = [1, -1, 0][n % 3]; } n++; }
   }
   if (q.has('x')) { sim.sx = sim.spx = parseFloat(q.get('x')!); }
   if (q.has('y')) { sim.sy = sim.spy = parseFloat(q.get('y')!); }
@@ -433,6 +439,7 @@ function pollInput(): number {
   if (q.has('evt')) sim.debugEvtP = parseFloat(q.get('evt')!);
   if (q.has('scanview')) { fb.scanR = -1; fb.scanEnv = 1; fb.scanText = 'T=184K  CH4 62% H2 31% NH3 5%  MASS 4.1E26 KG  RINGS: ICE  '; }
   if (q.has('ship')) sim.setShip(shipById(q.get('ship')!));
+  if (q.has('vert')) sim.vert = q.get('vert') !== '0';
   if (q.has('tune')) mountTuner(sim, id => sim.setShip(shipById(id)));
 }
 function finishTutQuiet(): void { tut = 99; }
@@ -592,7 +599,7 @@ function frame(now: number): void {
   const alpha = acc / DT;
 
   // camera: follow interpolated ship with velocity look-ahead, exponential smoothing
-  const ix = sim.spx + (sim.sx - sim.spx) * alpha, iy = sim.spy + (sim.sy - sim.spy) * alpha;
+  const ix = sim.spx + (sim.sx - sim.spx) * alpha, iy = sim.spy + (sim.sy - sim.spy) * alpha + (sim.vert ? (sim.spz + (sim.sz - sim.spz) * alpha) * FrameBuilder.OBL : 0);
   const lead = 0.22 + 0.2 * Math.min(1, Math.hypot(sim.svx, sim.svy) / 150);   // look-ahead grows with speed (stands in for zoom: the glyph grid is fixed)
   const tx = ix + sim.svx * lead, ty = iy + sim.svy * lead;
   if (!camInit) { camX = tx; camY = ty; camInit = true; }

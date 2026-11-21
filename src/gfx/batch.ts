@@ -44,11 +44,26 @@ export const enum Spr { Player = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine 
 export class SpriteBatch {
   readonly data = new Float32Array(MAX_SPRITES * SPRITE_STRIDE);
   n = 0;
+  /** Altitude of the next instances (sort key, stored in the unused last slot). */
+  z = 0;
+  private readonly tmp = new Float32Array(SPRITE_STRIDE);
+  /** Stable insertion sort by altitude so higher craft draw over lower ones (verticality). Allocation-free. */
+  sortByZ(): void {
+    const d = this.data, t = this.tmp, S = SPRITE_STRIDE;
+    for (let i = 1; i < this.n; i++) {
+      const key = d[i * S + 11];
+      if (d[(i - 1) * S + 11] <= key) continue;
+      t.set(d.subarray(i * S, i * S + S));
+      let j = i - 1;
+      while (j >= 0 && d[j * S + 11] > key) { d.copyWithin((j + 1) * S, j * S, j * S + S); j--; }
+      d.set(t, (j + 1) * S);
+    }
+  }
   reset(): void { this.n = 0; }
   add(x: number, y: number, ang: number, size: number, type: number, seed: number, flash: number, aux: number, scale = 1, shade = 1): void {
     if (this.n >= MAX_SPRITES) return;
     const o = this.n++ * SPRITE_STRIDE, d = this.data;
     d[o] = x; d[o + 1] = y; d[o + 2] = ang; d[o + 3] = size;
-    d[o + 4] = type; d[o + 5] = seed; d[o + 6] = flash; d[o + 7] = aux; d[o + 8] = size; d[o + 9] = scale; d[o + 10] = shade; d[o + 11] = 0;
+    d[o + 4] = type; d[o + 5] = seed; d[o + 6] = flash; d[o + 7] = aux; d[o + 8] = size; d[o + 9] = scale; d[o + 10] = shade; d[o + 11] = this.z;
   }
 }

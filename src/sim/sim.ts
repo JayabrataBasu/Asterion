@@ -19,7 +19,7 @@ export const enum Kind { None = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine =
 /** Damage types, matched against ShipDef.resist. */
 export const enum Dmg { Kinetic = 0, Thermal = 1, Em = 2 }
 export const enum St { Patrol = 0, Chase = 1, Attack = 2, Flee = 3 }
-export const enum In { Missile = 128, Thrust = 1, Left = 2, Right = 4, Brake = 8, Fire = 16, Boost = 32, Dodge = 64, StrafeL = 256, StrafeR = 512 }
+export const enum In { Missile = 128, Thrust = 1, Left = 2, Right = 4, Brake = 8, Fire = 16, Boost = 32, Dodge = 64, StrafeL = 256, StrafeR = 512, Climb = 1024, Dive = 2048, Scan = 4096, Cruise = 8192 }
 export const enum Ev { PlayerShot = 1, EnemyShot = 2, Hit = 3, Explosion = 4, ShipHit = 5, Kill = 6, Charge = 7, Pickup = 8, Dash = 9, Boss = 10, Objective = 11, Dock = 12, Missile = 13, Heal = 14 }
 export const enum Up { Gun = 0, Hull = 1, Boost = 2, Thrust = 3, Magnet = 4, Spread = 5, Missile = 6 }
 export const UP_N = 7, UP_MAX = 5;
@@ -34,7 +34,10 @@ export const enum Col { Fire = 0, Cyan = 1, Red = 2, White = 3, Gray = 4, Green 
 export const PROF_NAMES = ['ship', 'world', 'ents', 'bolts', 'misc', 'fx'];
 /** Aim assist tuning. Modes: 0 off, 1 wide hits, 2 cone lead, 3 soft homing. */
 export const AIM_ASSIST = { A_BONUS: 1.2, B_CONE: 8 * Math.PI / 180, B_FULL: 3 * Math.PI / 180, B_RANGE: 260, C_CONE: 25 * Math.PI / 180, C_RANGE: 180, C_TURN: 1.6 };
-const GRAV_K = 9.5;   // pull is independent of planet size; reach (gravReach) is capped so giants are not bigger magnets
+const GRAV_K = 9.5;
+/** Verticality experiment: three bands at z = -1 (Low), 0 (Mid), 1 (High). Hits only connect within V_TOL. */
+export const V_TOL = 0.5;
+export const BAND_NAME = ['LOW', 'MID', 'HIGH'];   // pull is independent of planet size; reach (gravReach) is capped so giants are not bigger magnets
 const AST_R = [0, 2.4, 4.3, 6.7];
 
 /** Enemy stats come from the shared ShipDef schema (ENEMY in ships.ts); flat arrays keep the hot loop cheap. */
@@ -204,7 +207,7 @@ export class Sim {
     this.objKills = 0; this.objTarget = 6; this.objTier = 0; this.nextBoss = 150; this.frIdx = -1; this.escortFails = 0; this.sw = 0;
     this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.ecl = 0; this.mega = 0; this.eclT = 0; this.megaT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
     this.caches.clear(); this.slowT = 0; this.bossKills = 0; this.missiles = this.missileCap; this.missileCd = 0; this.mlife.fill(0); this.eshield.fill(0);
-    this.cool = 0; this.lastHit = -99; this.invuln = 2; this.hitFlash = 0;
+    this.cool = 0; this.lastHit = -99; this.invuln = 2; this.hitFlash = 0; this.sz = this.spz = 0; this.szBand = 0; this.prevIn = 0; this.ez.fill(0); this.eband.fill(0);
     this.evHead = this.evTail = 0; this.hitT = 0; this.echarge.fill(0);
     this.ek.fill(0); this.blife.fill(0); this.plife.fill(0); this.rlife.fill(0);
     this.nLoaded = 0; this.lastSx = this.lastSy = 0x7fffffff; this.spawnCd = 6; this.gcount = 0;
@@ -261,6 +264,9 @@ export class Sim {
       this.sa += this.sw * DT;
     }
     this.dashCd -= DT; this.dashLock -= DT;
+    this.spz = this.sz;
+    if (this.vert) this.updateAltitude(S, inp);
+    this.prevIn = inp;
     const ca = Math.cos(this.sa), sa = Math.sin(this.sa);
 
     this.thrusting = false; this.boosting = false;
@@ -274,7 +280,7 @@ export class Sim {
     if (strafe !== 0) { const a = S.thrustLat / S.mass * strafe; this.svx -= sa * a * DT; this.svy += ca * a * DT; }
     if (this.boosting && !this.wasBoost && this.boostE > 15) this.ring(this.sx, this.sy, 12, Col.Cyan);
     this.wasBoost = this.boosting;
-    if (!this.boosting) this.boostE = Math.min(this.boostMax, this.boostE + S.boostRegen * DT * (1 - 0.7 * this.storm));
+    if (!this.boosting) this.boostE = Math.min(this.boostMax, this.boostE + S.boostRegen * DT * (1 - 0.7 * (this.vert && this.sz < -V_TOL ? 0 : this.storm)));
     if (S.dashCharges <= 1) {
       if ((inp & In.Dodge) && this.dashCd <= 0) this.dash(ca, sa, S.dashCooldown);
     } else {                                                   // multi-charge dash: charges refill one per cooldown
@@ -307,6 +313,10 @@ export class Sim {
         const fall = 1 - Math.max(0, d - r) / reach;
         const g = GRAV_K * fall * S.gravSusceptibility;
         this.svx += dx / d * g * DT; this.svy += dy / d * g * DT;
+      }
+      if (this.vert && this.sz > V_TOL) continue;                // High band flies over planets: no pull, no collision
+      if (this.vert && this.sz < -V_TOL && d < r + R + 16) {     // Low band in the atmosphere: drag, heat, cover
+        const kd = Math.exp(-0.7 * DT); this.svx *= kd; this.svy *= kd; this.heat += 16 * DT; this.lowCover = 1;
       }
       if (d > r + R && d < r + R + 7 && (this.svx * this.svx + this.svy * this.svy) > 900) {   // atmosphere skim: speed boost, heat
         const k3 = 1 + 0.35 * DT; this.svx *= k3; this.svy *= k3;
@@ -357,6 +367,7 @@ export class Sim {
         }
       }
       const bc = Math.cos(ba), bs = Math.sin(ba), bsp = FLIGHT.BOLT_SPEED * S.boltSpeedMult;
+      this.shotZ = this.sz;
       const dm = (1 + 0.3 * this.up[Up.Gun]) * S.damageMult;
       this.spawnBullet(ox, oy, this.svx * 0.5 + bc * bsp, this.svy * 0.5 + bs * bsp, 1.05, 0, dm);
       if (this.up[Up.Spread] > 0) for (let sd = -1; sd <= 1; sd += 2) {
@@ -403,20 +414,57 @@ export class Sim {
     this.heat = Math.max(0, this.heat - S.heatDissipation * DT);
     if (this.heat > S.heatMax) { this.overheat = true; this.heat = Math.min(this.heat, S.heatMax * 1.25); this.hurt((this.heat - S.heatMax) * 0.4 * DT + 2 * DT, Dmg.Thermal); }
     else if (this.overheat && this.heat < S.heatMax * 0.5) this.overheat = false;
-    if (this.storm > 0.3) this.shield = 0;                                   // ion storms knock shields out
+    const stormHere = this.storm > 0.3 && (!this.vert || this.sz > -V_TOL);   // storms reach Mid and High only
+    if (stormHere) this.shield = 0;                                           // ion storms knock shields out
     else if (this.time - this.lastHit > S.shieldDelay) this.shield = Math.min(S.shieldMax, this.shield + S.shieldRegen * DT);
     this.firedT -= DT;
     let sig = S.signature * (this.thrusting ? 1 : 0.7) * (this.boosting ? 1.6 : 1) * (this.firedT > 0 ? 1.3 : 1);
     if (S.darkSig < 1 && !this.thrusting && this.firedT <= 0) sig = S.signature * S.darkSig;        // Shade running dark
-    this.sigNow = sig * this.sigMod;
+    this.sigNow = sig * this.sigMod * (this.lowCover > 0 ? 0.4 : 1);
+    this.lowCover = 0;
     if (S.darkSig < 1 && (this.tick & 3) === 0 && this.svx * this.svx + this.svy * this.svy > 400)   // ghost trail
       this.spawnParticle(this.sx - Math.cos(this.sa) * 4, this.sy - Math.sin(this.sa) * 4, this.svx * 0.2, this.svy * 0.2, 0.9, PK.Smoke, Col.Magenta, 1);
     if (S.wingmen > 0) this.updateWingLaunch(S);
   }
-  /** Verticality experiment (M4): altitude bands on. */
+  /** Verticality experiment (M4): altitude bands on. Everything below is inert (z = 0) when off. */
   vert = false;
+  /** Player altitude (continuous), previous-tick altitude (render interpolation) and target band. */
+  sz = 0; spz = 0; szBand = 0; private prevIn = 0;
+  readonly ez = new Float32Array(MAX_E);
+  readonly eband = new Int8Array(MAX_E);
+  readonly bz = new Float32Array(MAX_B);
   /** Environmental multiplier on signature (planet shadow / low band set by M4-M5 systems). */
   sigMod = 1;
+
+  private lowCover = 0;
+  /** Band changes are edge-triggered and animate at climbRate bands per second; rings at Mid chip the hull. */
+  private updateAltitude(S: ShipDef, inp: number): void {
+    const nb = S.altitudeBands, lo = nb >= 3 ? -1 : 0, hi = nb >= 2 ? 1 : 0;
+    if ((inp & In.Climb) && !(this.prevIn & In.Climb)) this.szBand = Math.min(hi, this.szBand + 1);
+    if ((inp & In.Dive) && !(this.prevIn & In.Dive)) this.szBand = Math.max(lo, this.szBand - 1);
+    if (this.szBand < lo || this.szBand > hi) this.szBand = 0;
+    const step = Math.max(0, S.climbRate) * DT, dz = this.szBand - this.sz;
+    this.sz = Math.abs(dz) <= step ? this.szBand : this.sz + Math.sign(dz) * step;
+    if (Math.abs(this.sz) < V_TOL) {                         // planetary rings sit at Mid: flying through them hurts
+      for (let k = 0; k < this.nPl; k++) {
+        const o = k * PLANET_STRIDE; if (this.pl[o + 5] < 0.5) continue;
+        const R = this.pl[o + 2], ex = (this.sx - this.pl[o]) / R, ey = (this.sy - this.pl[o + 1]) / R, ra = this.pl[o + 4] * Math.PI, c = Math.cos(ra), sn = Math.sin(ra);
+        const vx = ex * c + ey * sn, vy = (-ex * sn + ey * c) / 0.30, rd = Math.sqrt(vx * vx + vy * vy);
+        if (rd > 1.5 && rd < 2.38) { this.hurt(5 * DT, Dmg.Kinetic); if ((this.tick & 3) === 0) this.sparks(this.sx, this.sy, 1, Col.Gray, 30); }
+      }
+    }
+  }
+  /** Enemy band choice: match the player's band to attack, move off it to flee, drift in patrol. */
+  private updateEnemyBand(i: number, kind: number, st: number): void {
+    if (kind === Kind.Asteroid || kind === Kind.Mine || kind === Kind.Station || kind === Kind.Comet) return;
+    let want = this.eband[i];
+    if (kind === Kind.Wing) want = this.szBand;
+    else if (st === St.Attack || st === St.Chase) want = this.szBand;
+    else if (st === St.Flee) want = this.szBand === 0 ? ((this.eseed[i] | 0) & 1 ? 1 : -1) : 0;
+    this.eband[i] = want;
+    const rate = (kind === Kind.Boss ? 0.6 : kind === Kind.Rammer || kind === Kind.Drone ? 2.2 : 1.4) * DT, dz = want - this.ez[i];
+    this.ez[i] = Math.abs(dz) <= rate ? want : this.ez[i] + Math.sign(dz) * rate;
+  }
 
   /** Hive: launch a wingman from a bay while hostiles are near, one per cooldown, up to ShipDef.wingmen. */
   private updateWingLaunch(S: ShipDef): void {
@@ -448,6 +496,7 @@ export class Sim {
     if (tg >= 0 && this.et2[i] <= 0 && Math.abs(wrapAngle(fa - this.ea[i])) < 0.3) {
       this.et2[i] = 0.45;
       const c = Math.cos(this.ea[i]), sn = Math.sin(this.ea[i]);
+      this.shotZ = this.ez[i];
       this.spawnBullet(x + c * 2, y + sn * 2, this.evx[i] * 0.5 + c * 200, this.evy[i] * 0.5 + sn * 200, 0.9, 0, 0.6 * this.ship.damageMult);
     }
   }
@@ -550,6 +599,8 @@ export class Sim {
       const e = this.spawnEnt(Kind.Asteroid, x, y, (r.next() - 0.5) * 5, (r.next() - 0.5) * 5);
       if (e < 0) return;
       this.eaux[e] = size; this.er[e] = AST_R[size]; this.ehp[e] = size * 2.5; this.esec[e] = key;
+      const gap = Math.floor(hash2(sx * 29 + 1, sy * 37 + 2) * 3), bd = Math.floor(hash2(e * 7 + sx, i * 13 + sy) * 2);   // canyon: one band per field stays open
+      this.ez[e] = this.eband[e] = ((gap + 1 + bd) % 3) - 1;
     }
     // asteroid belt hugging the planet
     if (hasP && hash2(sx * 3 + 5, sy * 7 + 2) < 0.5) {
@@ -560,6 +611,7 @@ export class Sim {
         if (e < 0) break;
         const size = r.next() < 0.3 ? 2 : 1;
         this.eaux[e] = size; this.er[e] = AST_R[size]; this.ehp[e] = size * 2.5; this.esec[e] = key;
+        this.ez[e] = this.eband[e] = hash2(e, i * 3 + sx) < 0.5 ? -1 : 0;                  // belts sit in the planet's bands
       }
     }
   }
@@ -585,7 +637,7 @@ export class Sim {
       this.ek[i] = kind; this.es[i] = St.Patrol; this.ex[i] = x; this.ey[i] = y; this.evx[i] = vx; this.evy[i] = vy;
       this.ea[i] = Math.atan2(vy, vx); this.ehp[i] = KIND_HP[kind]; this.er[i] = KIND_R[kind];
       this.et[i] = this.rng.next() * 1.2; this.et2[i] = 0; this.eaux[i] = 0; this.eseed[i] = this.rng.next() * 100;
-      this.eflash[i] = 0; this.eshield[i] = 0; if (this.hard && kind !== Kind.Asteroid && kind !== Kind.Station && kind !== Kind.Mine) this.ehp[i] *= 1.5; this.eg[i] = -1; this.eslot[i] = 0; this.esec[i] = 0;
+      this.eflash[i] = 0; this.eshield[i] = 0; this.ez[i] = 0; this.eband[i] = 0; if (this.hard && kind !== Kind.Asteroid && kind !== Kind.Station && kind !== Kind.Mine) this.ehp[i] *= 1.5; this.eg[i] = -1; this.eslot[i] = 0; this.esec[i] = 0;
       return i;
     }
     return -1;
@@ -812,7 +864,7 @@ export class Sim {
         const o = k * PLANET_STRIDE, dx = this.mx[m] - this.pl[o], dy = this.my[m] - this.pl[o + 1];
         if (dx * dx + dy * dy < this.pl[o + 2] * this.pl[o + 2]) hit = true;
       }
-      if (hit) { this.mlife[m] = 0; this.explode(this.mx[m], this.my[m], 1.7, Col.Fire); this.blast(this.mx[m], this.my[m], 14, 24, true); }
+      if (hit) { this.mlife[m] = 0; this.blastZ = t >= 0 ? this.ez[t] : this.sz; this.explode(this.mx[m], this.my[m], 1.7, Col.Fire); this.blast(this.mx[m], this.my[m], 14, 24, true); }
     }
   }
 
@@ -909,7 +961,7 @@ export class Sim {
       if (k === Kind.Station) continue;
       if (k === Kind.Freighter) { this.updateFreighter(i); continue; }
       if (k === Kind.Comet) { this.updateComet(i); continue; }
-      if (k === Kind.Wing) { this.updateWing(i); continue; }
+      if (k === Kind.Wing) { if (this.vert) this.updateEnemyBand(i, k, 0); this.updateWing(i); continue; }
       if (k === Kind.Hauler) { this.ex[i] += this.evx[i] * DT; this.ey[i] += this.evy[i] * DT; this.ea[i] = Math.atan2(this.evy[i], this.evx[i]); if ((this.tick & 7) === 0) this.spawnParticle(this.ex[i] - Math.cos(this.ea[i]) * 5, this.ey[i] - Math.sin(this.ea[i]) * 5, 0, 0, 0.8, PK.Exhaust, Col.Amber, 1); continue; }
       if (k === Kind.Asteroid) {
         this.ex[i] += this.evx[i] * DT; this.ey[i] += this.evy[i] * DT;
@@ -933,7 +985,7 @@ export class Sim {
     this.ex[i] += this.evx[i] * DT; this.ey[i] += this.evy[i] * DT;
     if (this.et[i] > 1.0 && this.alive) {
       const dx = this.sx - this.ex[i], dy = this.sy - this.ey[i];
-      if (dx * dx + dy * dy < 8 * 8) { this.killEnt(i, false); return; }
+      if (dx * dx + dy * dy < 8 * 8 && (!this.vert || Math.abs(this.ez[i] - this.sz) <= V_TOL)) { this.killEnt(i, false); return; }
     }
     if (this.et[i] > 40) this.ek[i] = Kind.None;
   }
@@ -969,6 +1021,7 @@ export class Sim {
       }
     }
     this.es[i] = st;
+    if (this.vert) this.updateEnemyBand(i, kind, st);
 
     // ---- behaviours
     if (st === St.Patrol) {
@@ -1076,10 +1129,11 @@ export class Sim {
         }
       }
     }
-    if (kind === Kind.Rammer && this.alive && d < this.er[i] + this.ship.radius + 1.5) { this.killEnt(i, false); return; }
+    if (kind === Kind.Rammer && this.alive && d < this.er[i] + this.ship.radius + 1.5 && (!this.vert || Math.abs(this.ez[i] - this.sz) <= V_TOL)) { this.killEnt(i, false); return; }
 
     // ---- weapons
-    if (wantFire && this.alive) {
+    this.shotZ = this.ez[i];
+    if (wantFire && this.alive && (!this.vert || Math.abs(this.ez[i] - this.sz) <= V_TOL)) {
       const dir = Math.atan2(tdy, tdx);
       const diff = Math.abs(wrapAngle(dir - this.ea[i]));
       if (kind === Kind.Drone || kind === Kind.Splitter) {
@@ -1178,6 +1232,7 @@ export class Sim {
       return;
     }
     if (k === Kind.Mine) {
+      this.blastZ = this.ez[j];
       this.explode(x, y, 2.0, Col.Amber);
       this.blast(x, y, 11, 34, byPlayer);
       return;
@@ -1203,7 +1258,7 @@ export class Sim {
       const e = this.spawnEnt(Kind.Drone, x + Math.cos(a) * 3, y + Math.sin(a) * 3, this.evx[j] + Math.cos(a) * 50, this.evy[j] + Math.sin(a) * 50);
       if (e >= 0) this.es[e] = St.Chase;
     }
-    if (k === Kind.Rammer) { this.blast(x, y, 12, 26, byPlayer); }
+    if (k === Kind.Rammer) { this.blastZ = this.ez[j]; this.blast(x, y, 12, 26, byPlayer); }
     if (k === Kind.Gunship || k === Kind.Boss || k === Kind.Sniper || k === Kind.Tender || k === Kind.Minelayer) {
       const nc = k === Kind.Boss ? 16 : 5;        // glowing hull chunks that tumble away and cool
       for (let c = 0; c < nc; c++) {
@@ -1221,6 +1276,8 @@ export class Sim {
   }
 
   /** Radial damage to everything near (x,y); chains through mines with a recursion cap. */
+  /** Altitude of the current blast (set by the caller). */
+  private blastZ = 0;
   private blast(x: number, y: number, radius: number, dmg: number, byPlayer: boolean): void {
     if (this.depth > 3) return;
     this.depth++;
@@ -1230,6 +1287,7 @@ export class Sim {
       const dx = this.ex[e] - x, dy = this.ey[e] - y, rr = radius + this.er[e];
       const d2 = dx * dx + dy * dy;
       if (d2 > rr * rr) continue;
+      if (this.vert && Math.abs(this.ez[e] - this.blastZ) > V_TOL * 2) continue;
       const f = 1 - Math.sqrt(d2) / rr;
       this.ehp[e] -= dmg * f * (k === Kind.Asteroid ? 0.4 : 0.4 + 0.3);
       this.eflash[e] = 1;
@@ -1237,7 +1295,7 @@ export class Sim {
     }
     if (this.alive) {
       const dx = this.sx - x, dy = this.sy - y, d2 = dx * dx + dy * dy, rr = radius + this.ship.radius;
-      if (d2 < rr * rr) {
+      if (d2 < rr * rr && (!this.vert || Math.abs(this.sz - this.blastZ) <= V_TOL * 2)) {
         const d = Math.sqrt(d2) + 1e-4;
         this.damageShip(dmg * (1 - d / rr), dx / d, dy / d, Dmg.Thermal);
       }
@@ -1255,6 +1313,7 @@ export class Sim {
         const dx = this.sx - this.ex[j], dy = this.sy - this.ey[j];
         const rr = this.er[j] + this.ship.radius, d2 = dx * dx + dy * dy;
         if (d2 >= rr * rr) continue;
+        if (this.vert && k !== Kind.Station && Math.abs(this.ez[j] - this.sz) > V_TOL) continue;   // different band: pass over / under
         const d = Math.sqrt(d2) + 1e-4, nx = dx / d, ny = dy / d;
         this.sx += nx * (rr - d); this.sy += ny * (rr - d);
         const rvx = this.svx - this.evx[j], rvy = this.svy - this.evy[j];
@@ -1274,10 +1333,12 @@ export class Sim {
   }
 
   // ===================================================================== bullets
+  /** Altitude given to the next spawned bullet (shooter's z). */
+  shotZ = 0;
   spawnBullet(x: number, y: number, vx: number, vy: number, life: number, owner: number, dmg: number, type: number = Dmg.Kinetic): void {
     const i = this.bcur; this.bcur = (this.bcur + 1) % MAX_B;
     this.bx[i] = x; this.by[i] = y; this.bvx[i] = vx; this.bvy[i] = vy;
-    this.blife[i] = life; this.bown[i] = owner; this.bdmg[i] = dmg; this.btype[i] = type;
+    this.blife[i] = life; this.bown[i] = owner; this.bdmg[i] = dmg; this.btype[i] = type; this.bz[i] = this.shotZ;
   }
 
   private updateBullets(): void {
@@ -1301,7 +1362,7 @@ export class Sim {
       }
       let dead = false;
       // planets absorb bullets
-      for (let k = 0; k < this.nPl && !dead; k++) {
+      for (let k = 0; k < this.nPl && !dead && !(this.vert && this.bz[i] > V_TOL); k++) {
         const o = k * PLANET_STRIDE, dx = nx - this.pl[o], dy = ny - this.pl[o + 1], r = this.pl[o + 2];
         if (dx * dx + dy * dy < r * r) { dead = true; this.sparks(nx, ny, 3, Col.Gray, 24); }
       }
@@ -1311,6 +1372,7 @@ export class Sim {
         for (let gy = cy - 1; gy <= cy + 1 && !dead; gy++) for (let gx = cx - 1; gx <= cx + 1 && !dead; gx++) {
           for (let j = h.head[SpatialHash.key(gx, gy)]; j >= 0; j = h.next[j]) {
             if (this.ek[j] === Kind.None || this.ek[j] === Kind.Freighter || this.ek[j] === Kind.Wing) continue;
+            if (this.vert && this.ek[j] !== Kind.Station && Math.abs(this.ez[j] - this.bz[i]) > V_TOL) continue;
             let t = ((this.ex[j] - ox) * sdx + (this.ey[j] - oy) * sdy) / sl;
             t = t < 0 ? 0 : t > 1 ? 1 : t;
             const qx = ox + sdx * t - this.ex[j], qy = oy + sdy * t - this.ey[j];
@@ -1325,7 +1387,7 @@ export class Sim {
         dead = true; this.hitEnt(this.frIdx, this.bdmg[i] * 0.6, this.bvx[i], this.bvy[i]);
       } else if (!dead && this.alive) {
         const dx = nx - this.sx, dy = ny - this.sy, rr = this.ship.radius + 0.6;
-        if (dx * dx + dy * dy < rr * rr) {
+        if (dx * dx + dy * dy < rr * rr && (!this.vert || Math.abs(this.bz[i] - this.sz) <= V_TOL)) {
           dead = true;
           const l = Math.sqrt(this.bvx[i] * this.bvx[i] + this.bvy[i] * this.bvy[i]) + 1e-4;
           this.damageShip(this.bdmg[i], this.bvx[i] / l, this.bvy[i] / l, this.btype[i]);
