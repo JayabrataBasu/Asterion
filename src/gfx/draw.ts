@@ -65,8 +65,6 @@ export class FrameBuilder {
   /** Notable events of the run (game-over summary), shared with the exploration layer. */
   notable: string[] = [];
   private cols = 0; private rows = 0; private asp = 2;
-  /** Boost amount 0..1 (set by main): stretches the player hull slightly along its heading. */
-  hyper = 0;
   private thrS = 0.25;
   /** Ships drawn this frame (x, y, heading, hull radius, allegiance, band dim) for quiet zones and nav lights. */
   private readonly lt = new Float32Array(16 * 6); private nl = 0;
@@ -256,7 +254,7 @@ export class FrameBuilder {
       const target = s.thrusting ? (s.boosting ? 1.35 : 0.9) : 0.25;   // idle pilot light: the engine is never fully dark
       this.thrS += (target - this.thrS) * 0.22;
       const S = s.ship, rk = S.radius / 2.4 * SK;
-      sp.add(x, y, a, SK * S.artSize, S.art, this.hullState() + 2 * ((s.up[6] > 0 ? 1 : 0) | (s.up[8] >= 2 ? 2 : 0) | (s.up[1] >= 3 ? 4 : 0)), s.hitFlash * 0.8, this.thrS, 0.8 * (1 + 0.12 * this.hyper), this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
+      sp.add(x, y, a, SK * S.artSize, S.art, this.hullState() + 2 * ((s.up[6] > 0 ? 1 : 0) | (s.up[8] >= 2 ? 2 : 0) | (s.up[1] >= 3 ? 4 : 0)), s.hitFlash * 0.8, this.thrS, 0.8, this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
       if (S.darkSig >= 1 || this.dark < 0.5) { gl.add(x, y, 9, 0.16, 0.18, 0.24); this.ship(x, y, a, SK * S.artSize, 0.8, 0); }
       if (s.thrusting) {
         const ca = Math.cos(a), sa = Math.sin(a);

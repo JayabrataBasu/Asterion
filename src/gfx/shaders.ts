@@ -622,7 +622,7 @@ precision highp float; precision highp int;
 uniform sampler2D uScene; uniform sampler2D uBloom;
 uniform vec2 uCanvas; uniform float uTime;
 uniform float uBloomK, uChroma, uCurve, uScan, uVig, uFlash, uHit, uGrain;
-uniform vec4 uWarp[6];     // 0-3: shock rings (uv.xy, radius in height units, strength); 4-5: heat shimmer (uv.xy, 0, strength)
+uniform vec4 uWarp[6];     // 0-3: shock rings (uv.xy, radius in height units, strength); 4-5 unused (the engine heat shimmer was removed)
 in vec2 vUv; out vec4 o;
 float h12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 void main(){
@@ -638,13 +638,6 @@ void main(){
     float d = length(dd);
     float wave = exp(-pow((d - w.z) / 0.035, 2.0)) * w.w;
     uv += normalize(dd + 1e-5) / vec2(asp, 1.0) * wave * 0.012;
-  }
-  for (int i = 4; i < 6; i++) {
-    vec4 w = uWarp[i];
-    if (w.w <= 0.0) continue;
-    vec2 dd = (uv - w.xy) * vec2(asp, 1.0);
-    float f = exp(-dot(dd, dd) / 0.0016) * w.w;
-    uv += vec2(sin(uv.y * 420.0 + uTime * 33.0), cos(uv.x * 310.0 + uTime * 29.0)) * 0.0016 * f;
   }
   vec2 cc = uv - 0.5;
   vec2 off = cc * dot(cc, cc) * uChroma;

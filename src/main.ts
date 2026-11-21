@@ -602,7 +602,7 @@ resize();
 // ---------------------------------------------------------------- loop
 let acc = 0, last = performance.now();
 let camX = 0, camY = 0, camInit = false;
-let combat = 0, boostFlash = 0, prevBoost = false;
+let combat = 0;
 const THEMES: [number, number, number][] = [[1, 1, 1], [1.55, 0.6, 0.55], [0.6, 1.3, 0.8], [1.2, 0.7, 1.55], [1.4, 1.0, 0.5], [0.7, 1.1, 1.55]];
 const tint: [number, number, number] = [1, 1, 1];
 const style: [number, number, number, number] = [0.78, 1, 1, 0.5];   // per-sector sky look: palette hue, cloud scale, star density, filament strength
@@ -735,13 +735,11 @@ function frame(now: number): void {
   }
   if (toastT > 0) { toastT -= dt; renderer.glyphs.text(toast, 2, renderer.rows - 2, 1.2, 1.2, 0.6, 1); }
   hyperAmt += ((sim.alive && sim.boosting && state === 'play' ? 1 : 0) - hyperAmt) * (1 - Math.exp(-dt * (sim.boosting ? 4 : 2.5)));
-  if (sim.boosting && !prevBoost && !settings.reduceFx) boostFlash = 0.15;   // entry flash at the vanishing point
-  prevBoost = sim.boosting; boostFlash = Math.max(0, boostFlash - dt); fb.hyper = hyperAmt;
   hyperBuf[0] = Math.cos(sim.sa); hyperBuf[1] = Math.sin(sim.sa); hyperBuf[2] = hyperAmt * (settings.reduceFx ? 0.4 : 1);
   const fxk = settings.reduceFx ? 0.35 : 1;
   if (revealT >= 0) { revealT += dt * (settings.reduceFx ? 2 : 1); if (revealT * 240 > renderer.cols + renderer.rows * 2) revealT = -1; }
   if (fb.scanEnv > 0 && state === 'play' && sim.scanP <= 0 && !scanHold) fb.scanEnv = Math.max(0, fb.scanEnv - dt * 0.5);
-  renderer.render({ ecl: sim.ecl, mega: sim.mega, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk + boostFlash * 3.3,
+  renderer.render({ ecl: sim.ecl, mega: sim.mega, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: sim.hitFlash * fxk,   // low hull pulses as a ring around the ship (draw.ts), not a full-screen tint
     streakX: sim.svx, streakY: sim.svy, streak: 0, hyper: hyperBuf, combat, tint, style, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 
