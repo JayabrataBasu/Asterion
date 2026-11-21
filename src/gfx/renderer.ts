@@ -16,8 +16,6 @@ export interface FrameParams {
   sunTint?: [number, number, number]; ecl?: number; mega?: number; vel?: [number, number, number];
   /** Typed-arrival reveal radius in cells (<0 = off); planet index being rewritten by the scan view (-1 none); layer debug. */
   reveal?: number; scanPlanet?: number; layers?: boolean;
-  /** Per-sector nebula amount (negative space: most of space is empty). */
-  neb?: number;
 }
 /** Scene glyph table (index order must match the G_* defines in FS_SCENE). */
 const GLYPHS = ['-', '/', '|', String.fromCharCode(92), '.', ',', ':', ';', '~', '=', '#', '%', '*', "'", '@', '+', 'o'];
@@ -75,7 +73,7 @@ export class Renderer {
     this.pComp = this.prog(S.VS_FULLSCREEN, S.FS_COMPOSITE);
     this.uScene = this.locs(this.pScene, ['uRes', 'uCam', 'uAspect', 'uTime', 'uNP', 'uPA', 'uPB', 'uPC', 'uG', 'uNeb', 'uSun', 'uStreak', 'uTint', 'uShipL', 'uFlare', 'uStorm', 'uSunTint', 'uEcl', 'uMega', 'uVel', 'uCombat']);
     this.uGlow = this.locs(this.pGlow, ['uRes', 'uCam', 'uAspect']);
-    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uBgMax', 'uReveal', 'uLayers']);
+    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers']);
     this.uGlyph = this.locs(this.pGlyph, ['uCellPx', 'uOrigin', 'uCanvas', 'uScene', 'uAtlas', 'uBgK']);
     this.uSprite = this.locs(this.pSprite, ['uRes', 'uCam', 'uAspect', 'uTime']);
     this.uMatch = this.locs(this.pMatch, ['uSpr', 'uSig', 'uCand', 'uNC', 'uFill']);
@@ -243,7 +241,7 @@ export class Renderer {
     gl.useProgram(this.pScene); gl.bindVertexArray(this.vaoEmpty);
     const u = this.uScene;
     gl.uniform2f(u.uRes, this.cols, this.rows); gl.uniform2f(u.uCam, f.camX, f.camY);
-    gl.uniform1f(u.uAspect, this.aspect); gl.uniform1f(u.uTime, f.time); gl.uniform1f(u.uNeb, st.nebula * (f.neb ?? 1) * (1 - 0.45 * (f.combat ?? 0))); gl.uniform1f(u.uSun, st.sun * (1 - 0.55 * (f.combat ?? 0)) * (1 + 1.6 * (f.flare ?? 0))); gl.uniform1f(u.uFlare, f.flare ?? 0); gl.uniform1f(u.uStorm, f.storm ?? 0);
+    gl.uniform1f(u.uAspect, this.aspect); gl.uniform1f(u.uTime, f.time); gl.uniform1f(u.uNeb, st.nebula * (1 - 0.45 * (f.combat ?? 0))); gl.uniform1f(u.uSun, st.sun * (1 - 0.55 * (f.combat ?? 0)) * (1 + 1.6 * (f.flare ?? 0))); gl.uniform1f(u.uFlare, f.flare ?? 0); gl.uniform1f(u.uStorm, f.storm ?? 0);
     const np = Math.min(8, f.nPlanets);
     this.pa.fill(0); this.pb.fill(0); this.pc.fill(0);
     for (let i = 0; i < np; i++) {
@@ -306,7 +304,7 @@ export class Renderer {
     gl.uniform2i(a.uCells, this.cols, this.rows); gl.uniform2i(a.uOrigin, this.ox, this.oy); gl.uniform2i(a.uCellPx, this.cwPx, this.chPx);
     gl.uniform1f(a.uExposure, st.exposure); gl.uniform1f(a.uDither, st.dither); gl.uniform1f(a.uBgK, st.bgK);
     gl.uniform1f(a.uFgBase, st.fgBase); gl.uniform1f(a.uFgGain, st.fgGain); gl.uniform1f(a.uTime, f.time);
-    gl.uniform1f(a.uBgMax, 0.3); gl.uniform3f(a.uReveal, f.reveal ?? -1, 4, f.reveal !== undefined && f.reveal >= 0 ? 1 : 0); gl.uniform1i(a.uLayers, f.layers ? 1 : 0);
+    gl.uniform3f(a.uReveal, f.reveal ?? -1, 4, f.reveal !== undefined && f.reveal >= 0 ? 1 : 0); gl.uniform1i(a.uLayers, f.layers ? 1 : 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3); this.drawCalls++;
 
     // ---- pass 3: instanced glyphs (entities, particles, HUD)

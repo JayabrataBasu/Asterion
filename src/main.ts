@@ -608,13 +608,6 @@ function updateTint(dt: number, x: number, y: number): void {
   const k = 1 - Math.exp(-0.8 * dt);
   for (let i = 0; i < 3; i++) tint[i] += (th[i] - tint[i]) * k;
 }
-/** Negative space: most sectors are nearly empty; a few hold a nebula. Smoothed like the tint. */
-let nebAmt = 0.35;
-function updateNeb(dt: number, x: number, y: number): void {
-  const sx = sectorOf(x), sy = sectorOf(y);
-  const want = sx === 0 && sy === 0 ? 0.35 : hash2(sx * 31 + 7, sy * 17 + 3) > 0.8 ? 1.0 : 0.08;
-  nebAmt += (want - nebAmt) * (1 - Math.exp(-0.5 * dt));
-}
 /** Camera zoom linked to speed and vistas: one cell-size step, hidden by a CSS scale tween (glyphs stay glyphs). */
 let zoomLvl = 0, zoomWant = 0, zoomHold = 0, zoomTw = 0, zoomFrom = 1, zoomTo = 1, zoomPending = -1;
 function updateZoom(dt: number, spd: number): void {
@@ -740,7 +733,7 @@ function frame(now: number): void {
 
   // dim the backdrop while hostiles are engaged so ships/bolts read clearly
   combat += ((sim.alive && sim.nEnemy > 0 && nearHostile() ? 1 : 0) - combat) * (1 - Math.exp(-1.5 * dt));
-  updateTint(dt, cx, cy); updateNeb(dt, cx, cy);
+  updateTint(dt, cx, cy);
   renderer.beginFrame();
   fb.showReticle = !demo;
   fb.fx = settings.reduceFx ? 0.35 : 1; fb.showLayers = layersOn;
@@ -770,7 +763,7 @@ function frame(now: number): void {
   if (fb.scanEnv > 0 && state === 'play' && sim.scanP <= 0 && !scanHold) fb.scanEnv = Math.max(0, fb.scanEnv - dt * 0.5);
   const vl = Math.hypot(sim.svx, sim.svy / renderer.aspect) + 1e-6;
   velBuf[0] = sim.svx / vl; velBuf[1] = sim.svy / renderer.aspect / vl; velBuf[2] = Math.max(0, Math.min(1, (spd - 110) / 80)) * fxk;
-  renderer.render({ neb: nebAmt, ecl: sim.ecl, mega: sim.mega, vel: velBuf, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
+  renderer.render({ ecl: sim.ecl, mega: sim.mega, vel: velBuf, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: Math.max(sim.hitFlash * fxk, sim.alive && sim.hp < 30 ? 0.22 + 0.16 * Math.sin(t * 7) * fxk : 0),
     streakX: sim.svx, streakY: sim.svy, streak, combat, tint, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 

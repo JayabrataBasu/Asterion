@@ -70,12 +70,12 @@ vec3 nebLayer(vec2 pl, float seed){
   col += core * vec3(0.55,0.28,0.18);
   float lane = smoothstep(0.52, 0.70, fbm2(q*2.6 + w*1.5 + 90.0));
   float rid = 1.0 - abs(fbm2(q*2.3 + w*1.2 + 40.0)*2.0 - 1.0); rid *= rid; rid *= rid;
-  vec3 res = col * (dens*dens*0.55 + core*0.34) * (1.0 - 0.7*lane) + vec3(0.002,0.003,0.007);
+  vec3 res = col * (dens*dens*0.55 + core*0.34) * (1.0 - 0.7*lane) + vec3(0.003,0.004,0.010);
   res += rid * dens * mix(vec3(0.22,0.45,1.0), vec3(1.0,0.42,0.58), h3) * 0.5;
   return res;
 }
 
-// stars: sparse, dim; near top speed they bunch toward the heading and shift blue ahead / red behind
+// stars: dense parallax field; near top speed they bunch toward the heading and shift blue ahead / red behind
 vec4 starLayer(vec2 cell, vec2 camCell, float par, float dens, float seed){
   vec2 sc = floor(cell + floor(camCell * par));
   float h = hash12(sc + seed * 17.0);
@@ -83,14 +83,14 @@ vec4 starLayer(vec2 cell, vec2 camCell, float par, float dens, float seed){
   float b = hash12(sc * 1.37 + seed * 3.1);
   float tw = 0.72 + 0.28 * sin(uTime * (1.0 + b*4.0) + b*60.0);
   vec3 tint = mix(vec3(0.62,0.78,1.0), vec3(1.0,0.84,0.58), hash12(sc*0.77 + 9.1));
-  float br = (0.22 + 0.60*b*b) * tw * (0.55 + 0.45*par);
-  return vec4(tint * br * 1.4, br);
+  float br = (0.30 + 0.70*b) * tw * (0.55 + 0.45*par);
+  return vec4(tint * br * 1.5, br);
 }
 
 vec3 galaxy(vec2 cell, vec2 camCell){
   vec2 p = cell + camCell * 0.06;
   vec2 g = floor(p / 120.0);
-  if (hash12(g + 7.3) < 0.86) return vec3(0.0);
+  if (hash12(g + 7.3) < 0.80) return vec3(0.0);
   vec2 c = (g + 0.25 + 0.5 * vec2(hash12(g + 1.1), hash12(g + 2.2))) * 120.0;
   vec2 d = (p - c) * vec2(1.0, uAspect);
   float ang = hash12(g + 3.3) * 3.14159;
@@ -100,7 +100,7 @@ vec3 galaxy(vec2 cell, vec2 camCell){
   float r = length(e), th = atan(e.y, e.x);
   float arm = 0.5 + 0.5 * cos(2.0 * th - 6.0 * log(r + 0.15));
   vec3 tint = mix(vec3(1.0, 0.78, 0.55), vec3(0.55, 0.7, 1.0), hash12(g + 5.5));
-  return tint * (exp(-r * 2.3) * (0.18 + 0.7 * arm) * 0.5 + exp(-r * 8.0) * 0.8);
+  return tint * (exp(-r * 2.3) * (0.18 + 0.7 * arm) * 0.55 + exp(-r * 8.0) * 0.9);
 }
 
 vec2 sunPos(vec2 camCell){ return uRes * vec2(0.66, 0.78) - camCell * 0.02; }
@@ -109,10 +109,11 @@ vec3 sunGlow(vec2 cell, vec2 sp, out float core){
   vec2 d = (cell + 0.5 - sp) * vec2(1.0, uAspect);
   float r = length(d);
   core = exp(-r * r / 10.0) * 6.0 + exp(-r / 3.5) * 1.1;
-  float corona = 0.16 / (1.0 + r * r * 0.008);
+  float corona = 0.22 / (1.0 + r * r * 0.006);
   float ang = atan(d.y, d.x);
-  float rays = pow(max(0.0, 0.5 + 0.5 * sin(ang * 9.0 + uTime * 0.08) * sin(ang * 5.0 - uTime * 0.05)), 3.0) * exp(-r * 0.06) * 0.4;
-  return vec3(1.0, 0.86, 0.62) * uSunTint * (core + corona + rays);
+  float rays = pow(max(0.0, 0.5 + 0.5 * sin(ang * 9.0 + uTime * 0.08) * sin(ang * 5.0 - uTime * 0.05)), 3.0) * exp(-r * 0.05) * 0.55;
+  float streak = exp(-abs(d.y) * 0.9) * exp(-abs(d.x) * 0.03) * 0.35;
+  return uSunTint * (vec3(1.0, 0.86, 0.62) * (core + corona + rays) + vec3(1.0, 0.75, 0.5) * streak);
 }
 
 vec3 surface(vec3 n, int type, float seed, float detail, out float gloss, out vec3 emis){
@@ -203,7 +204,7 @@ void main(){
 
   // ---- rare nebulae (uNeb already carries the per-sector amount) and very rare galaxies
   vec3 rgb = (nebLayer(wp - uCam*0.80, 0.0) * 0.85 + nebLayer(wp - uCam*0.55, 1.0) * 0.55) * uNeb * uTint;
-  rgb += galaxy(cell, camCell) * min(1.0, uNeb + 0.35) * uTint;
+  rgb += galaxy(cell, camCell) * uNeb * uTint;
   float glyph = 0.0;
 
   // ---- far set pieces: a ringed giant crossing the sun (uEcl) and a megastructure arc crossing the sky (uMega)
@@ -214,7 +215,6 @@ void main(){
   if (uEcl > 0.0) occl = 1.0 - smoothstep(gR - 4.0, gR + 1.0, length((sp - gc) * vec2(1.0, uAspect)));
   vec2 sunW = uCam + (sp - uRes * 0.5) * vec2(1.0, uAspect);
   for (int k = 0; k < 8; k++) { if (k >= uNP) break; if (length(sunW - uPA[k].xy) < uPA[k].z * 0.98) occl = 1.0; }   // a planet hides the sun
-  bool sunOn = sp.x > -4.0 && sp.y > -4.0 && sp.x < uRes.x + 4.0 && sp.y < uRes.y + 4.0;
   float core;
   rgb += sunGlow(cell, sp, core) * uSun * (1.0 - 0.97 * occl);
   if (uStorm > 0.0) {
@@ -223,13 +223,13 @@ void main(){
     rgb += vec3(0.5, 0.65, 1.0) * bolt * uStorm * 1.6;
   }
 
-  // ---- stars: sparse, thinned further in a fight
+  // ---- stars: thinned in a fight
   vec2 h = uRes * 0.5 + uVel.xy * uRes.x * 0.35;
   vec2 sc = h + (cell - h) * (1.0 + 0.45 * uVel.z);
   float thin = 1.0 - 0.6 * uCombat;
-  vec4 s0 = starLayer(sc, camCell, 0.14, 0.008 * thin, 1.0);
-  vec4 s1 = starLayer(sc, camCell, 0.34, 0.0045 * thin, 2.0);
-  vec4 s2 = starLayer(sc, camCell, 0.70, 0.0024 * thin, 3.0);
+  vec4 s0 = starLayer(sc, camCell, 0.14, 0.020 * thin, 1.0);
+  vec4 s1 = starLayer(sc, camCell, 0.34, 0.011 * thin, 2.0);
+  vec4 s2 = starLayer(sc, camCell, 0.70, 0.0055 * thin, 3.0);
   vec4 st = s0;
   if (s1.a > st.a) st = s1;
   if (s2.a > st.a) st = s2;
@@ -242,24 +242,15 @@ void main(){
     vec2 rel = normalize(cell - uRes * 0.5 + 1e-3);
     float shift = dot(rel, uVel.xy) * uVel.z;
     rgb += st.rgb * mix(vec3(1.0), shift > 0.0 ? vec3(0.7, 0.9, 1.4) : vec3(1.4, 0.8, 0.6), abs(shift) * 0.6); glyph = k;
-  }
-
-  // ---- sun: core in @ * +, diffraction spikes as long rows of - and |, lens-flare ghosts on the line through screen centre
-  {
-    vec2 d = cell + 0.5 - sp;
-    float r = length(d * vec2(1.0, uAspect)), vis = uSun * (1.0 - occl);
-    if (vis > 0.05 && sunOn) {
-      if (r < 1.3) glyph = G_AT; else if (r < 2.7) glyph = G_STAR; else if (r < 4.3) glyph = G_PLUS;
-      float hs = step(abs(d.y), 0.5) * exp(-abs(d.x) / 16.0) * step(4.3, r), vs = step(abs(d.x), 0.5) * exp(-abs(d.y) / 7.0) * step(4.3, r);
-      if (hs > 0.04) { rgb += vec3(1.0, 0.9, 0.7) * uSunTint * hs * 1.3 * vis; glyph = G_DASH; }
-      if (vs > 0.04) { rgb += vec3(1.0, 0.9, 0.7) * uSunTint * vs * 1.3 * vis; glyph = G_BAR; }
-      vec2 axis = uRes * 0.5 - sp;
-      for (int i = 0; i < 3; i++) {
-        float k = i == 0 ? 1.35 : i == 1 ? 1.7 : 2.25, rad = i == 0 ? 2.2 : i == 1 ? 3.6 : 1.4;
-        float gdd = length((cell + 0.5 - (sp + axis * k)) * vec2(1.0, uAspect * 0.5));
-        float ring = smoothstep(0.6, 0.0, abs(gdd - rad));
-        if (ring > 0.55) { rgb += mix(vec3(0.4, 0.9, 0.7), vec3(0.9, 0.5, 1.0), float(i) * 0.5) * 0.05 * ring * vis * (1.0 - uCombat); glyph = G_O; }
-      }
+  } else {                                          // bright near stars get - | arms in the neighbouring cells
+    vec4 nL = starLayer(sc + vec2(-1.0, 0.0), camCell, 0.70, 0.0055 * thin, 3.0);
+    vec4 nR = starLayer(sc + vec2( 1.0, 0.0), camCell, 0.70, 0.0055 * thin, 3.0);
+    vec4 nU = starLayer(sc + vec2(0.0,  1.0), camCell, 0.70, 0.0055 * thin, 3.0);
+    vec4 nD = starLayer(sc + vec2(0.0, -1.0), camCell, 0.70, 0.0055 * thin, 3.0);
+    float ah = max(nL.a, nR.a), av = max(nU.a, nD.a);
+    if (max(ah, av) > 0.66) {
+      glyph = ah >= av ? G_DASH : G_BAR;
+      rgb += (ah >= av ? (nL.a > nR.a ? nL.rgb : nR.rgb) : (nU.a > nD.a ? nU.rgb : nD.rgb)) * 0.32;
     }
   }
 
@@ -435,7 +426,6 @@ precision highp float; precision highp int;
 uniform sampler2D uScene; uniform sampler2D uRamp; uniform sampler2D uMA; uniform sampler2D uMB;
 uniform ivec2 uCells; uniform ivec2 uOrigin;
 uniform float uExposure, uDither, uBgK, uFgBase, uFgGain, uTime;
-uniform float uBgMax;      // glyph budget: background ramp cells may only use the light end of the ramp
 uniform vec3 uReveal;      // typed arrival: x = revealed radius (cells), y = front width, z = on
 uniform int uLayers;       // debug: tint cells by layer
 out vec4 o;
@@ -465,7 +455,7 @@ void main(){
     if (s.a > 0.0) { g = int(s.a * 255.0 + 0.5); l = max(l, 0.14); }
     else {
       float dth = (bayer4(cell + ivec2(int(uTime * 3.0) & 1, 0)) - 0.5) * uDither * 0.09;
-      float li = clamp(min(l, uBgMax) + dth, 0.0, uBgMax);
+      float li = clamp(l + dth, 0.0, 1.0);
       g = int(texelFetch(uRamp, ivec2(int(li * 255.0), 0), 0).r * 255.0 + 0.5);
     }
     float mx = max(max(s.r, s.g), s.b) + 1e-4;
@@ -480,7 +470,8 @@ void main(){
     h += texelFetch(uMA, max(cell - ivec2(1, 0), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
     h += texelFetch(uMA, min(cell + ivec2(0, 1), uCells - 1), 0).a > 0.0 ? 1.0 : 0.0;
     h += texelFetch(uMA, max(cell - ivec2(0, 1), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
-    if (h > 0.0) { bg *= 0.0; g = 0; }              // dark halo: blank cells around ships so they read against anything
+    float dim = 1.0 - 0.6 * min(1.0, h);            // dim (not blank) the cells around ships so they read against anything
+    bg *= dim; fg *= dim;
   }
   if (uReveal.z > 0.0) {                              // typed arrival: the scene writes itself in outward from the centre
     float rd = length((vec2(cell) - vec2(uCells) * 0.5) * vec2(1.0, 2.0));

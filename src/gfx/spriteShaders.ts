@@ -54,17 +54,17 @@ float gS = 0.0; vec2 gP = vec2(0.0);
 // module bits on player hulls (M7): 1 missile pods, 2 sensor dish, 4 armour plating
 float gM = 0.0;
 
-// ---- wren: original all-rounder. Swept delta wings with raked feather tips, canards, one engine pod per side, split tail. ~26 units
+// ---- wren: the X-wing style starfighter (the game's original hero ship)
 float fPlayer(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  float dF = min(sdUneven(q, vec2(-9.0, 0.0), vec2(15.0, 0.0), 2.0, 0.15), sdEll(q - vec2(-3.0, 0.0), vec2(6.0, 2.3)));
-  float dW = min(sdTri(q, vec2(4.0, 1.4), vec2(-7.5, 10.5), vec2(-6.5, 1.4)) - 0.15, sdSeg(q, vec2(-7.5, 10.5), vec2(-3.5, 11.6)) - 0.35);
-  float dC = sdTri(q, vec2(9.5, 1.0), vec2(5.5, 3.8), vec2(5.0, 1.0));
-  float dN = min(sdBox(q - vec2(-8.6, 2.6), vec2(2.0, 1.25)) - 0.3, sdSeg(q, vec2(-7.5, 0.9), vec2(-12.0, 4.4)) - 0.45);
-  float dH = min(min(dF, dW), min(dC, dN));
+  float dF = min(sdUneven(q, vec2(-6.0, 0.0), vec2(16.0, 0.0), 1.5, 0.1), sdEll(q - vec2(-5.0, 0.0), vec2(5.0, 2.0)));
+  float dW = min(sdUneven(q, vec2(0.5, 1.2), vec2(-7.5, 8.6), 1.5, 0.8), sdUneven(q, vec2(0.5, 1.4), vec2(-9.0, 12.2), 1.5, 0.8));
+  float dN = min(sdUneven(q, vec2(0.0, 2.9), vec2(-9.8, 2.9), 1.25, 1.25),
+             min(sdSeg(q, vec2(-7.5, 8.6), vec2(3.0, 8.6)) - 0.24, sdSeg(q, vec2(-9.0, 12.2), vec2(5.5, 12.2)) - 0.24));
+  float dH = min(dF, min(dW, dN));
   float L = 1.2 + 9.0 * thr;
-  float dFl = sdUneven(q, vec2(-10.9, 2.6), vec2(-10.9 - L, 2.6), 0.95, 0.03);
-  h = max(max(bev(-dF, 1.8), bev(-dW, 0.6) * 0.5), max(bev(-dN, 1.0) * 0.85, bev(-dC, 0.5) * 0.6));
-  dp = vec3(dF, min(dW, dC), dN);
+  float dFl = sdUneven(q, vec2(-9.8, 2.9), vec2(-9.8 - L, 2.9), 0.95, 0.03);
+  h = max(max(bev(-dF, 1.5), bev(-dW, 0.6) * 0.5), bev(-dN, 1.0) * 0.85);
+  dp = vec3(dF, dW, dN);
   mt = dFl < dH ? 1.0 : 0.0;
   return min(dH, dFl);
 }
@@ -391,19 +391,32 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
   emis = vec3(0.0); spec = 0.35;
   float blink = 0.5 + 0.5 * sin(uTime * 5.0 + seed * 20.0);
   vec3 col;
-  if (ty == 0) {                       // wren: cream hull, grey wings, mint accent (the player's colour)
-    vec3 hullC = vec3(0.90, 0.90, 0.86), wingC = vec3(0.70, 0.72, 0.76), nacC = vec3(0.46, 0.48, 0.52), mint = vec3(0.20, 0.95, 0.70);
+  if (ty == 0) {
+    vec3 hullC = vec3(0.92, 0.94, 0.98), wingC = vec3(0.80, 0.82, 0.86), nacC = vec3(0.50, 0.52, 0.56);
     float m = min(dp.x, min(dp.y, dp.z));
     col = m == dp.x ? hullC : (m == dp.y ? wingC : nacC);
-    if (m == dp.y) { col = mix(col, mint, smoothstep(0.55, 0.25, abs(q.y - (1.4 + (4.0 - q.x) * 0.79)))); col *= 1.0 - 0.22 * panel(q.x * 0.35, 0.06); }
-    if (m == dp.x) { col *= 1.0 - 0.22 * panel(q.x * 0.28 + 0.1, 0.05); col = mix(col, mint, smoothstep(0.3, 0.12, abs(q.y - 1.1)) * step(-4.0, q.x) * step(q.x, 6.0)); }
-    float dc = sdEll(vec2(q.x, p.y) - vec2(3.0, 0.0), vec2(3.2, 1.0));
+    if (m == dp.y) {
+      col = mix(col, vec3(0.92, 0.08, 0.06), clamp(smoothstep(0.6, 0.3, abs(q.y - 9.0)) + smoothstep(0.6, 0.3, abs(q.y - 5.4)), 0.0, 1.0));
+      col *= 1.0 - 0.25 * panel(q.x * 0.35, 0.06);
+    }
+    if (m == dp.x) {
+      col *= 1.0 - 0.25 * panel(q.x * 0.28 + 0.1, 0.05);
+      col = mix(col, vec3(0.9, 0.2, 0.15), smoothstep(0.3, 0.15, abs(q.y - 1.0)) * step(-3.0, q.x) * step(q.x, 4.0));
+    }
+    if (m == dp.x) col = mix(col, vec3(1.0, 0.72, 0.2), smoothstep(10.5, 11.5, q.x));   // gold nose cap
+    if (m == dp.z) col = mix(col, vec3(0.9, 0.1, 0.08), smoothstep(0.4, 0.15, abs(q.x + 3.5)) * 0.85);
+    float dc = sdEll(vec2(q.x, p.y) - vec2(2.0, 0.0), vec2(3.0, 1.0));
     float glass = smoothstep(0.1, -0.1, dc);
-    col = mix(col, vec3(0.04, 0.20, 0.30) + vec3(0.4, 1.0, 0.9) * smoothstep(0.15, 0.9, -dc) * 0.45, glass);
-    emis += glass * vec3(0.04, 0.26, 0.22) * (0.6 + 0.4 * blink) * 0.6;
-    emis += smoothstep(1.0, 0.0, length((q - vec2(-10.7, 2.6)) / vec2(0.9, 1.0))) * mix(vec3(1.4, 0.7, 0.25), vec3(0.8, 1.3, 2.0), clamp(thr - 0.9, 0.0, 1.0)) * (0.35 + thr);
-    emis += smoothstep(0.7, 0.0, length(q - vec2(-3.5, 11.6))) * (p.y > 0.0 ? vec3(2.0, 0.2, 0.15) : vec3(0.2, 2.0, 0.4)) * blink * 1.5;
-    emis += smoothstep(0.8, 0.0, length(q - vec2(15.0, 0.0))) * mint * 1.4;
+    vec3 gl = vec3(0.04, 0.20, 0.34) + vec3(0.5, 0.9, 1.3) * smoothstep(0.15, 0.9, -dc) * 0.45;
+    col = mix(col, gl, glass);
+    emis += glass * vec3(0.04, 0.22, 0.34) * (0.6 + 0.4 * blink) * 0.6;
+    float dome = length(vec2(q.x + 4.5, p.y) / vec2(1.3, 1.1));
+    col = mix(col, vec3(0.5, 0.6, 0.75), smoothstep(1.0, 0.8, dome));
+    float nz = length((q - vec2(-9.6, 2.9)) / vec2(0.9, 1.0));
+    emis += smoothstep(1.0, 0.0, nz) * mix(vec3(1.4, 0.7, 0.25), vec3(0.8, 1.3, 2.0), clamp(thr - 0.9, 0.0, 1.0)) * (0.35 + thr);
+    float lt = length(vec2(q.x - 5.5, q.y - 12.2));
+    emis += smoothstep(0.7, 0.0, lt) * (p.y > 0.0 ? vec3(2.0, 0.2, 0.15) : vec3(0.2, 2.0, 0.4)) * blink * 1.5;
+    emis += (smoothstep(0.8, 0.0, length(q - vec2(3.0, 8.6))) + smoothstep(0.8, 0.0, length(q - vec2(5.5, 12.2)))) * vec3(1.2, 0.35, 0.1) * (0.4 + 0.6 * blink);   // cannon tips
     spec = m == dp.x ? 0.7 : 0.3;
   } else if (ty == 14) {               // needle: dim silver (light glyph mass), bright spine and tip
     float m = min(dp.x, min(dp.y, dp.z));

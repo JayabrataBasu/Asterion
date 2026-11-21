@@ -66,3 +66,10 @@
 - Golden scenes: 14 (home, fleet, shop, map, gas giant, hangar, roster of all hulls, vertical off/on, chart, derelict, eclipse, scan view, layer debug). Screenshot sessions disable the timing-dependent auto-zoom and freeze debug set-piece progress, so baselines are stable.
 - `node scripts/golden.mjs perf '<query>'` reports the perf overlay at 720p / 1080p / 1440p. DESIGN.md has the numbers and the before/after comparison.
 - Docs: DESIGN.md (v3 decisions), TUNING.md (generated: every field, range, roster value, rating, module), README controls.
+
+## v3.1 — backdrop and Wren restored
+- Reverted the M3 negative-space backdrop: pre-M3 star density and brightness, bright-star arms, nebulae in every sector, galaxy frequency, no background glyph budget.
+- Sun blooms again (pre-M3 corona, rays and streak); removed the glyph sun core, diffraction-spike rows and flare-ghost rings.
+- Cells around ships are dimmed (pre-M3) instead of blanked.
+- Wren uses its original X-wing style hull and paint again. Flight unchanged.
+- Goldens and `docs/screens` regenerated.
