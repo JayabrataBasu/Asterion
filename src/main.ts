@@ -686,7 +686,7 @@ function frame(now: number): void {
     if (!sim.alive && !deathHandled) { deathHandled = true; if (sim.score > save.hi) { save.hi = sim.score; } save.hiBy[save.ship] = Math.max(save.hiBy[save.ship] ?? 0, sim.score); bank(); }
     tutorial(dt);
     const vk = ((sectorOf(sim.sx) & 0xffff) << 16) | (sectorOf(sim.sy) & 0xffff);
-    if (!visited.has(vk)) { visited.add(vk); if (sim.time > 1) arrive(); }
+    visited.add(vk);   // crossing into a new sector no longer replays the black-screen reveal: at speed it fired constantly
   } else if (attract) {
     sim.input = autopilot(); sim.aimOn = false;
     while (acc >= DT) { sim.step(); acc -= DT; }
