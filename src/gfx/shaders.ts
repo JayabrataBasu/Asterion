@@ -460,7 +460,7 @@ float glyphCov(int g, ivec2 loc){
 export const FS_ASCII = `#version 300 es
 precision highp float; precision highp int;
 uniform sampler2D uScene; uniform sampler2D uRamp; uniform sampler2D uMA; uniform sampler2D uMB;
-uniform ivec2 uCells; uniform ivec2 uOrigin;
+uniform ivec2 uCells; uniform ivec2 uOrigin; uniform ivec2 uWorldCell;   // uWorldCell: camera in whole cells, so the dither pattern travels with the backdrop
 uniform float uExposure, uDither, uBgK, uFgBase, uFgGain, uTime;
 uniform vec3 uReveal;      // typed arrival: x = revealed radius (cells), y = front width, z = on
 uniform int uLayers;       // debug: tint cells by layer
@@ -503,7 +503,7 @@ void main(){
     float l = 1.0 - exp(-lum * uExposure);
     if (s.a > 0.0) { g = int(s.a * 255.0 + 0.5); l = max(l, 0.14); }
     else {
-      float dth = (bayer4(cell + ivec2(int(uTime * 3.0) & 1, 0)) - 0.5) * uDither * 0.09;
+      float dth = (bayer4(cell + uWorldCell) - 0.5) * uDither * 0.09;   // world-anchored and steady: no crawl while moving, no 3 Hz flicker at rest
       float li = clamp(l + dth, 0.0, 1.0);
       g = int(texelFetch(uRamp, ivec2(int(li * 255.0), 0), 0).r * 255.0 + 0.5);
     }

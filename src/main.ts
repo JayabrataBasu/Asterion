@@ -456,7 +456,7 @@ function pollInput(): number {
   if (q.has('y')) { sim.sy = sim.spy = parseFloat(q.get('y')!); }
   if (q.has('obj')) { sim.objTier = parseInt(q.get('obj')!, 10) | 0; sim.objKills = 0; sim.step(); }
   if (q.has('hud') && q.get('hud') === '0') settings.hud = false;
-  dbgIn = (q.get('fire') === '1' ? In.Fire : 0) | (q.get('boost') === '1' ? In.Boost | In.Thrust : 0);
+  dbgIn = (q.get('fire') === '1' ? In.Fire : 0) | (q.get('boost') === '1' ? In.Boost | In.Thrust : 0) | (q.get('thrust') === '1' ? In.Thrust : 0);
   if (q.has('perf')) { settings.perf = true; perf.show(true); }
   if (q.has('evt')) sim.debugEvtP = parseFloat(q.get('evt')!);
   if (q.has('modules')) { sim.up[1] = 3; sim.up[6] = 1; sim.up[8] = 2; sim.refreshShip(); sim.invuln = 0; }
@@ -602,7 +602,7 @@ resize();
 // ---------------------------------------------------------------- loop
 let acc = 0, last = performance.now();
 let camX = 0, camY = 0, camInit = false;
-let combat = 0;
+let combat = 0, lvx = 0, lvy = 0;
 const THEMES: [number, number, number][] = [[1, 1, 1], [1.55, 0.6, 0.55], [0.6, 1.3, 0.8], [1.2, 0.7, 1.55], [1.4, 1.0, 0.5], [0.7, 1.1, 1.55]];
 const tint: [number, number, number] = [1, 1, 1];
 const style: [number, number, number, number] = [0.78, 1, 1, 0.5];   // per-sector sky look: palette hue, cloud scale, star density, filament strength
@@ -701,7 +701,8 @@ function frame(now: number): void {
   // camera: follow interpolated ship with velocity look-ahead, exponential smoothing
   const ix = sim.spx + (sim.sx - sim.spx) * alpha, iy = sim.spy + (sim.sy - sim.spy) * alpha + (sim.vert ? (sim.spz + (sim.sz - sim.spz) * alpha) * FrameBuilder.OBL : 0);
   const lead = 0.22 + 0.2 * Math.min(1, Math.hypot(sim.svx, sim.svy) / 150);   // look-ahead grows with speed (stands in for zoom: the glyph grid is fixed)
-  let lx = sim.svx * lead, ly = sim.svy * lead;
+  const kv = 1 - Math.exp(-8 * dt); lvx += (sim.svx - lvx) * kv; lvy += (sim.svy - lvy) * kv;   // low-pass the velocity: the sim steps at 60 Hz, which made the camera target (and the whole view) judder while accelerating
+  let lx = lvx * lead, ly = lvy * lead;
   const lm = Math.hypot(lx, ly), LMAX = 28;                 // capped look-ahead: at boost speed a velocity flicker used to shove the whole view (the screen wobble)
   if (lm > LMAX) { lx *= LMAX / lm; ly *= LMAX / lm; }
   const tx = ix + lx, ty = iy + ly;
