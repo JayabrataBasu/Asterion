@@ -87,7 +87,7 @@ export function buildAtlas(cw: number, ch: number, weight = 600): AtlasInfo {
 
 /** Ramp definitions: candidate chars are density-sorted at runtime so the ramp is monotonic for this font. */
 export const RAMPS: { name: string; chars: string; levels: number }[] = [
-  { name: 'classic', chars: ` .,'\`:;~"`, levels: 9 },   // light glyphs only; brightness comes from colour and the cell tint, not glyph weight
+  { name: 'classic', chars: ' .:-=+*#%@', levels: 10 },
   { name: 'dense',  chars: ' .,:;-~=+*xX#%&@', levels: 14 },
   { name: 'dots',   chars: ' ·∙:•○●◉', levels: 8 },
   { name: 'blocks', chars: ' ░▒▓█', levels: 5 },

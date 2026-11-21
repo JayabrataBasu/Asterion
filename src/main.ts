@@ -605,6 +605,7 @@ let camX = 0, camY = 0, camInit = false;
 let combat = 0;
 const THEMES: [number, number, number][] = [[1, 1, 1], [1.55, 0.6, 0.55], [0.6, 1.3, 0.8], [1.2, 0.7, 1.55], [1.4, 1.0, 0.5], [0.7, 1.1, 1.55]];
 const tint: [number, number, number] = [1, 1, 1];
+const style: [number, number, number, number] = [0.78, 1, 1, 0.5];   // per-sector sky look: palette hue, cloud scale, star density, filament strength
 const forceTheme = parseInt(new URLSearchParams(location.search).get('theme') ?? '-1', 10);   // debug: ?theme=0..5 pins the nebula theme
 if (forceTheme >= 0) { const t0 = THEMES[forceTheme % THEMES.length]; tint[0] = t0[0]; tint[1] = t0[1]; tint[2] = t0[2]; }
 function updateTint(dt: number, x: number, y: number): void {
@@ -612,6 +613,8 @@ function updateTint(dt: number, x: number, y: number): void {
   const th = forceTheme >= 0 ? THEMES[forceTheme % THEMES.length] : (sx === 0 && sy === 0) ? THEMES[0] : THEMES[Math.floor(hash2(sx * 7 + 3, sy * 13 + 1) * THEMES.length) % THEMES.length];
   const k = 1 - Math.exp(-0.8 * dt);
   for (let i = 0; i < 3; i++) tint[i] += (th[i] - tint[i]) * k;
+  const home = sx === 0 && sy === 0, st = home ? [0.78, 1, 1, 0.5] : [hash2(sx * 3 + 17, sy * 5 + 2), 0.7 + 0.9 * hash2(sx * 11 + 1, sy * 7 + 9), 0.75 + 1.0 * hash2(sx * 13 + 5, sy * 17 + 3), hash2(sx * 19 + 7, sy * 23 + 11)];
+  for (let i = 0; i < 4; i++) style[i] += (st[i] - style[i]) * k;
 }
 let layersOn = new URLSearchParams(location.search).has('layers');
 const scanHold = new URLSearchParams(location.search).has('scanview');
@@ -647,7 +650,7 @@ function drawMap(): void {
 }
 
 const warp = new Float32Array(24);
-/** Screen-space distortion sources: expanding shock rings from explosions and heat shimmer behind the player's engines. */
+/** Screen-space distortion sources: expanding shock rings from explosions (no speed ripple: only the hyperspace tunnel reacts to speed). */
 function buildWarp(cx: number, cy: number, fx: number): Float32Array {
   warp.fill(0);
   if (fx <= 0) return warp;
@@ -659,11 +662,6 @@ function buildWarp(cx: number, cy: number, fx: number): Float32Array {
     if (u < -0.3 || u > 1.3 || v < -0.3 || v > 1.3) continue;
     warp[n * 4] = u; warp[n * 4 + 1] = v; warp[n * 4 + 2] = sim.rrad[r] / cols * ar; warp[n * 4 + 3] = (sim.rlife[r] / 0.5) * 0.9 * fx;
     n++;
-  }
-  if (sim.alive && sim.thrusting) {
-    const ca = Math.cos(sim.sa), sa = Math.sin(sim.sa);
-    const ex = sim.sx - ca * 9, ey = sim.sy - sa * 9;
-    warp[16] = (ex - cx) / cols + 0.5; warp[17] = (ey - cy) / asp / rows + 0.5; warp[19] = (sim.boosting ? 1.0 : 0.55) * fx;
   }
   return warp;
 }
@@ -736,8 +734,6 @@ function frame(now: number): void {
     }
   }
   if (toastT > 0) { toastT -= dt; renderer.glyphs.text(toast, 2, renderer.rows - 2, 1.2, 1.2, 0.6, 1); }
-  const spd = Math.sqrt(sim.svx * sim.svx + sim.svy * sim.svy);
-  const streak = Math.max(0, Math.min(1, (spd - 85) / 60));
   hyperAmt += ((sim.alive && sim.boosting && state === 'play' ? 1 : 0) - hyperAmt) * (1 - Math.exp(-dt * (sim.boosting ? 4 : 2.5)));
   hyperBuf[0] = Math.cos(sim.sa); hyperBuf[1] = Math.sin(sim.sa); hyperBuf[2] = hyperAmt * (settings.reduceFx ? 0.4 : 1);
   const fxk = settings.reduceFx ? 0.35 : 1;
@@ -745,7 +741,7 @@ function frame(now: number): void {
   if (fb.scanEnv > 0 && state === 'play' && sim.scanP <= 0 && !scanHold) fb.scanEnv = Math.max(0, fb.scanEnv - dt * 0.5);
   renderer.render({ ecl: sim.ecl, mega: sim.mega, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: Math.max(sim.hitFlash * fxk, sim.alive && sim.hp < 30 ? 0.22 + 0.16 * Math.sin(t * 7) * fxk : 0),
-    streakX: sim.svx, streakY: sim.svy, streak: streak * (1 - hyperAmt), hyper: hyperBuf, combat, tint, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
+    streakX: sim.svx, streakY: sim.svy, streak: 0, hyper: hyperBuf, combat, tint, style, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 
   perf.frame(dt * 1000, performance.now() - t0, simMs);
   governor();

@@ -34,6 +34,7 @@ uniform int uNP; uniform vec4 uPA[8]; uniform vec4 uPB[8]; uniform vec4 uPC[8]; 
 uniform float uG[24];    // glyph table, see GLYPHS in renderer.ts
 uniform float uNeb; uniform float uSun; uniform vec3 uTint; uniform vec3 uStreak; uniform vec3 uShipL; uniform float uFlare; uniform float uStorm;
 uniform vec3 uSunTint; uniform float uEcl; uniform float uMega; uniform float uCombat;
+uniform vec4 uStyle;     // per-sector look: x palette hue, y cloud scale, z star density, w filament/dust strength
 uniform vec3 uHyper;     // boost tunnel: xy heading (world), z amount 0..1
 out vec4 o;
 ${NOISE}
@@ -56,8 +57,9 @@ const vec3 L = vec3(0.568, 0.5165, 0.640);
 #define G_PLUS uG[15]
 #define G_O uG[16]
 
+vec3 hueRgb(float h){ return clamp(abs(fract(h + vec3(0.0, 0.6667, 0.3333)) * 6.0 - 3.0) - 1.0, 0.0, 1.0); }
 vec3 nebLayer(vec2 pl, float seed){
-  vec2 q = pl * 0.0085 + seed * 13.7;
+  vec2 q = pl * 0.0085 * uStyle.y + seed * 13.7;
   float t = uTime;
   float w = fbm2(q + vec2(t*0.010, -t*0.007));
   float n = fbm2(q*1.55 + w*2.5 + 11.3 + vec2(t*0.004, 0.0));
@@ -65,25 +67,27 @@ vec3 nebLayer(vec2 pl, float seed){
   float h2 = smoothstep(0.38, 0.62, fbm2(q*0.35 - 30.0));
   float h3 = smoothstep(0.42, 0.62, fbm2(q*0.30 + 50.0));
   float core = smoothstep(0.60, 0.95, n);
-  vec3 A = vec3(0.50,0.06,0.70), B = vec3(0.03,0.45,0.70), C = vec3(0.85,0.20,0.32);
+  vec3 A = hueRgb(uStyle.x) * 0.72, B = hueRgb(uStyle.x - 0.23) * 0.72, C = hueRgb(uStyle.x + 0.19) * 0.9;   // palette rotates per sector (0.78 = the original violet / cyan / rose)
   vec3 col = mix(A, B, h2);
   col = mix(col, C, h3*0.75);
   col += core * vec3(0.55,0.28,0.18);
   float lane = smoothstep(0.52, 0.70, fbm2(q*2.6 + w*1.5 + 90.0));
   float rid = 1.0 - abs(fbm2(q*2.3 + w*1.2 + 40.0)*2.0 - 1.0); rid *= rid; rid *= rid;
-  vec3 res = col * (dens*dens*0.55 + core*0.34) * (1.0 - 0.7*lane) + vec3(0.003,0.004,0.010);
-  res += rid * dens * mix(vec3(0.22,0.45,1.0), vec3(1.0,0.42,0.58), h3) * 0.5;
+  vec3 res = col * (dens*dens*0.55 + core*0.34) * (1.0 - 0.7*lane*(0.4 + uStyle.w)) + vec3(0.003,0.004,0.010);
+  res += rid * dens * mix(hueRgb(uStyle.x - 0.2) * 0.8 + 0.15, hueRgb(uStyle.x + 0.2) * 0.8 + 0.15, h3) * (0.15 + 0.8 * uStyle.w);
   return res;
 }
 
 // stars: dense parallax field; near top speed they bunch toward the heading and shift blue ahead / red behind
 vec4 starLayer(vec2 cell, vec2 camCell, float par, float dens, float seed){
   vec2 sc = floor(cell + floor(camCell * par));
+  float clump = 0.45 + 1.4 * vn2(sc * 0.011 + seed * 5.0);          // stars cluster: rich lumps and quiet gaps
   float h = hash12(sc + seed * 17.0);
-  if (h > dens) return vec4(0.0);
+  if (h > dens * uStyle.z * clump) return vec4(0.0);
   float b = hash12(sc * 1.37 + seed * 3.1);
   float tw = 0.72 + 0.28 * sin(uTime * (1.0 + b*4.0) + b*60.0);
-  vec3 tint = mix(vec3(0.62,0.78,1.0), vec3(1.0,0.84,0.58), hash12(sc*0.77 + 9.1));
+  float sc2 = hash12(sc*0.77 + 9.1);                                 // stellar class: blue-white, yellow, orange-red
+  vec3 tint = sc2 < 0.5 ? mix(vec3(0.55,0.72,1.0), vec3(0.95,0.95,1.0), sc2 * 2.0) : sc2 < 0.85 ? mix(vec3(1.0,0.92,0.7), vec3(1.0,0.78,0.5), (sc2 - 0.5) * 2.86) : vec3(1.0,0.5,0.32);
   float br = (0.30 + 0.70*b) * tw * (0.55 + 0.45*par);
   return vec4(tint * br * 1.5, br);
 }
@@ -204,7 +208,7 @@ void main(){
   vec2 camCell = uCam / vec2(1.0, uAspect);
 
   // ---- rare nebulae (uNeb already carries the per-sector amount) and very rare galaxies
-  vec3 rgb = (nebLayer(wp - uCam*0.80, 0.0) * 0.85 + nebLayer(wp - uCam*0.55, 1.0) * 0.55) * uNeb * uTint;
+  vec3 rgb = (nebLayer(wp - uCam*0.80, 0.0) * 0.85 + nebLayer(wp - uCam*0.55, 1.0) * 0.55 + nebLayer(wp - uCam*0.25, 2.0) * 0.28) * uNeb * uTint;   // near clouds, mid clouds, far colour wash
   rgb += galaxy(cell, camCell) * uNeb * uTint;
   float glyph = 0.0;
 
@@ -476,7 +480,8 @@ void main(){
       float d = length((cc - z.xy) * vec2(1.0, 2.0)) - z.z * 0.7;
       float a = clamp(d / (3.0 + 0.25 * z.z), 0.0, 1.0); a = a * a * (3.0 - 2.0 * a);
       if (a < qa) { qa = a; qal = z.w; }
-    } }
+    }
+    qa = mix(0.35, 1.0, qa); }   // never fully black: the sky stays visible around a ship, just calmer
   if (ma.a > 0.0) {                                   // sprite cell: shape-matched glyph
     vec4 mb = texelFetch(uMB, cell, 0);
     g = int(ma.a * 255.0 + 0.5);
@@ -520,9 +525,6 @@ void main(){
     h += texelFetch(uMA, max(cell - ivec2(1, 1), ivec2(0)), 0).a > 0.0 ? 0.5 : 0.0;
     float dim = (1.0 - 0.9 * min(1.0, h)) * qa;      // dark ring + graded quiet zone: ships always sit in darkness
     bg *= dim; fg *= dim;
-    float ring = smoothstep(0.0, 0.12, qa) * (1.0 - smoothstep(0.12, 0.45, qa));        // allegiance rim: a faint tint on the first ring around the hull
-    if (qal > 0.5 && qal < 1.5 && ((cell.x + cell.y) & 1) == 1) ring *= 0.3;           // colour-blind backup: hostile rims are dotted, the player's is solid
-    bg += (qal < 0.5 ? vec3(0.02, 0.16, 0.11) : qal < 1.5 ? vec3(0.17, 0.02, 0.04) : vec3(0.14, 0.09, 0.01)) * ring;
   }
   if (uReveal.z > 0.0) {                              // typed arrival: the scene writes itself in outward from the centre
     float rd = length((vec2(cell) - vec2(uCells) * 0.5) * vec2(1.0, 2.0));

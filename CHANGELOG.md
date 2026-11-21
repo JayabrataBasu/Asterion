@@ -96,3 +96,9 @@
 - Always-on wingtip lights, strobe, idle engine pilot light; planet-shadow floor raised to 45%.
 - Anvil recoloured steel-blue with yellow hazard stripes; hostile hulls slightly desaturated.
 - `node scripts/golden.mjs contrast`: hull-vs-surround test (8 hulls x 6 themes, fails below 3:1). Debug params `?theme=0..5`, `?idle=1`.
+
+## v4.0-alpha.2
+- Removed the speed ripple (engine heat shimmer and star dashes); only the hyperspace tunnel reacts to speed.
+- Removed the allegiance rim ring around ships; quiet zone is softer (backdrop never below 35%); original glyph ramp restored so the sun bloom is back.
+- Per-sector sky: palette hue, cloud scale, star density, filament strength; stellar-class star colours, clustered stars, far colour wash layer.
+- New silhouettes for Needle, Anvil, Sextant, Mule, Shade, Magpie, Hive and every enemy (drone, gunship, minelayer, dreadnought, sniper, splitter, rammer, tender). Wren unchanged. Hostile hulls lean red.
