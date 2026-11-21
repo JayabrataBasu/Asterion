@@ -629,7 +629,7 @@ export class Sim {
 
   private dash(ca: number, sa: number, cd: number): void {
     const S = this.ship;
-    this.dashCd = cd; this.invuln = Math.max(this.invuln, S.dashIFrames); this.ring(this.sx, this.sy, 16, Col.Cyan);
+    this.dashCd = cd; this.invuln = Math.max(this.invuln, S.dashIFrames);
     this.svx += ca * S.dashImpulse; this.svy += sa * S.dashImpulse; this.emit(Ev.Dash, this.sx, this.sy, 1);
     this.sparks(this.sx - ca * 6, this.sy - sa * 6, 10, Col.Cyan, 50);
   }
