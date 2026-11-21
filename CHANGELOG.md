@@ -108,3 +108,8 @@
 - Planets: terminator band, night-side city lights, latitude-shaped gas bands, `( )` atmosphere rim on the lit limb.
 - Hyperspace: entry flash, slight hull stretch, tunnel tinted by the sector palette.
 - HUD: larger cells at 1440p+, low-hull warning is a pulsing ring around the ship instead of a full-screen tint. Player hull drawn slightly larger; hangar preview larger and slower.
+
+## v4.0-alpha.4
+- Vivid skies: saturated per-sector nebula palettes, hot emission cores, rim-lit dust lanes, bright knots and filaments, more (and brighter) galaxies and stars, a stronger sun corona, richer glyph colour. Dark gaps kept for contrast.
+- Removed the black-screen reveal that replayed on every sector crossing (it was the "ripple" at speed); removed the speed fade and whole-cell backdrop scrolling that were earlier guesses.
+- Mule frames thickened and brightened for contrast.

@@ -603,7 +603,6 @@ resize();
 let acc = 0, last = performance.now();
 let camX = 0, camY = 0, camInit = false;
 let combat = 0, lvx = 0, lvy = 0;
-const dbgMotion = parseFloat(new URLSearchParams(location.search).get('motion') ?? '-1');   // debug: force the speed fade of the backdrop text
 const THEMES: [number, number, number][] = [[1, 1, 1], [1.55, 0.6, 0.55], [0.6, 1.3, 0.8], [1.2, 0.7, 1.55], [1.4, 1.0, 0.5], [0.7, 1.1, 1.55]];
 const tint: [number, number, number] = [1, 1, 1];
 const style: [number, number, number, number] = [0.78, 1, 1, 0.5];   // per-sector sky look: palette hue, cloud scale, star density, filament strength
@@ -746,7 +745,7 @@ function frame(now: number): void {
   if (fb.scanEnv > 0 && state === 'play' && sim.scanP <= 0 && !scanHold) fb.scanEnv = Math.max(0, fb.scanEnv - dt * 0.5);
   renderer.render({ ecl: sim.ecl, mega: sim.mega, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: sim.hitFlash * fxk,   // low hull pulses as a ring around the ship (draw.ts), not a full-screen tint
-    streakX: sim.svx, streakY: sim.svy, streak: 0, hyper: hyperBuf, combat, tint, style, motion: dbgMotion >= 0 ? dbgMotion : Math.min(1, Math.max(0, (Math.hypot(lvx, lvy) - 40) / 100)), flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
+    streakX: sim.svx, streakY: sim.svy, streak: 0, hyper: hyperBuf, combat, tint, style, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 
   perf.frame(dt * 1000, performance.now() - t0, simMs);
   governor();

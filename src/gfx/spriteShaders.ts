@@ -130,7 +130,7 @@ float fMule(vec2 q, float thr, out float h, out float mt, out vec3 dp){
   for (int i = 0; i < 4; i++) {                                                     // four separate container slots per side: frames always, boxes = hold fill
     float cx = -7.5 + float(i) * 5.0;
     vec2 bq = q - vec2(cx, 6.2);
-    dFr = min(dFr, abs(sdBox(bq, vec2(2.1, 2.0))) - 0.22);
+    dFr = min(dFr, abs(sdBox(bq, vec2(2.1, 2.0))) - 0.4);
     dSt = min(dSt, sdSeg(q, vec2(cx, 1.0), vec2(cx, 4.2)) - 0.3);
     if (float(i) + side < n) dCt = min(dCt, sdBox(bq, vec2(1.8, 1.7)) - 0.1);
   }
@@ -464,7 +464,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     float ci = floor((q.x + 10.0) / 5.0) + (p.y >= 0.0 ? 0.0 : 4.0);
     vec3 cc = mix(vec3(1.0, 0.50, 0.12), vec3(0.25, 0.55, 1.0), step(0.5, hash12(vec2(ci, 3.0))));
     cc = mix(cc, vec3(1.0, 0.22, 0.18), step(0.75, hash12(vec2(ci, 9.0))));
-    col = m == dp.x ? vec3(0.85, 0.80, 0.45) : (m == dp.y ? cc : vec3(0.55, 0.55, 0.58));
+    col = m == dp.x ? vec3(0.95, 0.90, 0.55) : (m == dp.y ? cc : vec3(0.85, 0.86, 0.92));
     col *= 1.0 - 0.3 * panel(q.x * 0.5, 0.06) * (m == dp.y ? 1.0 : 0.4);
     emis += smoothstep(0.7, 0.0, length(q - vec2(-10.0, 0.0))) * vec3(1.8, 0.3, 0.2) * blink;
     emis += smoothstep(1.0, 0.0, length((q - vec2(-14.1, 6.2)) / vec2(0.9, 1.1))) * vec3(1.5, 0.7, 0.25) * (0.4 + thr);

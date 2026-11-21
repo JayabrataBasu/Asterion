@@ -65,18 +65,23 @@ vec3 nebLayer(vec2 pl, float seed){
   float t = uTime;
   float w = fbm2(q + vec2(t*0.010, -t*0.007));
   float n = fbm2(q*1.55 + w*2.5 + 11.3 + vec2(t*0.004, 0.0));
-  float dens = smoothstep(0.40, 0.92, n);
+  float dens = smoothstep(0.37, 0.88, n);                                   // lit clouds with real gaps of dark between them
   float h2 = smoothstep(0.38, 0.62, fbm2(q*0.35 - 30.0));
   float h3 = smoothstep(0.42, 0.62, fbm2(q*0.30 + 50.0));
-  float core = smoothstep(0.60, 0.95, n);
-  vec3 A = hueRgb(uStyle.x) * 0.72, B = hueRgb(uStyle.x - 0.23) * 0.72, C = hueRgb(uStyle.x + 0.19) * 0.9;   // palette rotates per sector (0.78 = the original violet / cyan / rose)
+  float core = smoothstep(0.55, 0.92, n);
+  vec3 A = hueRgb(uStyle.x) * 0.95, B = hueRgb(uStyle.x - 0.23) * 0.95, C = hueRgb(uStyle.x + 0.19) * 1.15;   // saturated palette rotates per sector
+  vec3 hot = mix(vec3(1.0, 0.72, 0.45), hueRgb(uStyle.x + 0.45), 0.35);     // star-forming cores glow warm against the cool body
   vec3 col = mix(A, B, h2);
-  col = mix(col, C, h3*0.75);
-  col += core * vec3(0.55,0.28,0.18);
+  col = mix(col, C, h3 * 0.8);
   float lane = smoothstep(0.52, 0.70, fbm2(q*2.6 + w*1.5 + 90.0));
+  float rim = lane * (1.0 - lane) * 4.0;                                    // dust lanes are lit along their edges
   float rid = 1.0 - abs(fbm2(q*2.3 + w*1.2 + 40.0)*2.0 - 1.0); rid *= rid; rid *= rid;
-  vec3 res = col * (dens*dens*0.55 + core*0.34) * (1.0 - 0.7*lane*(0.4 + uStyle.w)) + vec3(0.003,0.004,0.010);
-  res += rid * dens * mix(hueRgb(uStyle.x - 0.2) * 0.8 + 0.15, hueRgb(uStyle.x + 0.2) * 0.8 + 0.15, h3) * (0.15 + 0.8 * uStyle.w);
+  float knot = smoothstep(0.72, 0.95, fbm2(q*3.4 + w*2.0 + 70.0)); knot *= knot;   // bright emission knots inside the clouds
+  vec3 res = col * (pow(dens, 1.6) * 0.72 + core * 0.42) * (1.0 - 0.6*lane*(0.4 + uStyle.w)) + vec3(0.004,0.005,0.012);
+  res += hot * core * core * 0.45;
+  res += hot * rim * dens * 0.35;
+  res += hueRgb(uStyle.x + 0.12) * knot * dens * 1.05;
+  res += rid * dens * mix(hueRgb(uStyle.x - 0.2) * 0.8 + 0.25, hueRgb(uStyle.x + 0.2) * 0.8 + 0.25, h3) * (0.25 + 0.8 * uStyle.w);
   return res;
 }
 
@@ -90,14 +95,14 @@ vec4 starLayer(vec2 cell, vec2 camCell, float par, float dens, float seed){
   float tw = 0.72 + 0.28 * sin(uTime * (1.0 + b*4.0) + b*60.0);
   float sc2 = hash12(sc*0.77 + 9.1);                                 // stellar class: blue-white, yellow, orange-red
   vec3 tint = sc2 < 0.5 ? mix(vec3(0.55,0.72,1.0), vec3(0.95,0.95,1.0), sc2 * 2.0) : sc2 < 0.85 ? mix(vec3(1.0,0.92,0.7), vec3(1.0,0.78,0.5), (sc2 - 0.5) * 2.86) : vec3(1.0,0.5,0.32);
-  float br = (0.30 + 0.70*b) * tw * (0.55 + 0.45*par);
-  return vec4(tint * br * 1.5, br);
+  float br = (0.34 + 0.70*b) * tw * (0.55 + 0.45*par);
+  return vec4(tint * br * 1.9, br);
 }
 
 vec3 galaxy(vec2 cell, vec2 camCell){
-  vec2 p = cell + floor(camCell * 0.06);
+  vec2 p = cell + camCell * 0.06;
   vec2 g = floor(p / 120.0);
-  if (hash12(g + 7.3) < 0.80) return vec3(0.0);
+  if (hash12(g + 7.3) < 0.55) return vec3(0.0);
   vec2 c = (g + 0.25 + 0.5 * vec2(hash12(g + 1.1), hash12(g + 2.2))) * 120.0;
   vec2 d = (p - c) * vec2(1.0, uAspect);
   float ang = hash12(g + 3.3) * 3.14159;
@@ -107,16 +112,16 @@ vec3 galaxy(vec2 cell, vec2 camCell){
   float r = length(e), th = atan(e.y, e.x);
   float arm = 0.5 + 0.5 * cos(2.0 * th - 6.0 * log(r + 0.15));
   vec3 tint = mix(vec3(1.0, 0.78, 0.55), vec3(0.55, 0.7, 1.0), hash12(g + 5.5));
-  return tint * (exp(-r * 2.3) * (0.18 + 0.7 * arm) * 0.55 + exp(-r * 8.0) * 0.9);
+  return tint * (exp(-r * 2.3) * (0.18 + 0.7 * arm) * 0.95 + exp(-r * 8.0) * 1.4);
 }
 
-vec2 sunPos(vec2 camCell){ return uRes * vec2(0.66, 0.78) - floor(camCell * 0.02); }
+vec2 sunPos(vec2 camCell){ return uRes * vec2(0.66, 0.78) - camCell * 0.02; }
 
 vec3 sunGlow(vec2 cell, vec2 sp, out float core){
   vec2 d = (cell + 0.5 - sp) * vec2(1.0, uAspect);
   float r = length(d);
   core = exp(-r * r / 10.0) * 6.0 + exp(-r / 3.5) * 1.1;
-  float corona = 0.22 / (1.0 + r * r * 0.006);
+  float corona = 0.34 / (1.0 + r * r * 0.005);
   float ang = atan(d.y, d.x);
   float rays = pow(max(0.0, 0.5 + 0.5 * sin(ang * 9.0 + uTime * 0.08) * sin(ang * 5.0 - uTime * 0.05)), 3.0) * exp(-r * 0.05) * 0.55;
   float streak = exp(-abs(d.y) * 0.9) * exp(-abs(d.x) * 0.03) * 0.35;
@@ -211,9 +216,7 @@ void main(){
   vec2 camCell = uCam / vec2(1.0, uAspect);
 
   // ---- rare nebulae (uNeb already carries the per-sector amount) and very rare galaxies
-  // each layer scrolls in whole-cell steps: the glyphs stay identical and slide as a block, instead of re-rolling every frame (the 'ripple' while moving)
-  vec2 cu = vec2(1.0, uAspect), scr = (cell + 0.5 - uRes * 0.5) * cu;
-  vec3 rgb = (nebLayer(scr + floor(uCam * 0.20 / cu) * cu, 0.0) * 0.85 + nebLayer(scr + floor(uCam * 0.45 / cu) * cu, 1.0) * 0.55 + nebLayer(scr + floor(uCam * 0.75 / cu) * cu, 2.0) * 0.28) * uNeb * uTint;   // near clouds, mid clouds, far colour wash
+  vec3 rgb = (nebLayer(wp - uCam*0.80, 0.0) * 0.85 + nebLayer(wp - uCam*0.55, 1.0) * 0.60 + nebLayer(wp - uCam*0.25, 2.0) * 0.30) * uNeb * uTint;   // far, mid and near clouds
   rgb += galaxy(cell, camCell) * uNeb * uTint;
   float glyph = 0.0;
 
@@ -236,9 +239,9 @@ void main(){
   // ---- stars: thinned in a fight
   vec2 sc = cell;
   float thin = 1.0 - 0.6 * uCombat;
-  vec4 s0 = starLayer(sc, camCell, 0.14, 0.020 * thin, 1.0);
-  vec4 s1 = starLayer(sc, camCell, 0.34, 0.011 * thin, 2.0);
-  vec4 s2 = starLayer(sc, camCell, 0.70, 0.0055 * thin, 3.0);
+  vec4 s0 = starLayer(sc, camCell, 0.14, 0.026 * thin, 1.0);
+  vec4 s1 = starLayer(sc, camCell, 0.34, 0.014 * thin, 2.0);
+  vec4 s2 = starLayer(sc, camCell, 0.70, 0.0070 * thin, 3.0);
   vec4 st = s0;
   if (s1.a > st.a) st = s1;
   if (s2.a > st.a) st = s2;
@@ -466,7 +469,6 @@ uniform ivec2 uCells; uniform ivec2 uOrigin; uniform ivec2 uWorldCell;   // uWor
 uniform float uExposure, uDither, uBgK, uFgBase, uFgGain, uTime;
 uniform vec3 uReveal;      // typed arrival: x = revealed radius (cells), y = front width, z = on
 uniform int uLayers;       // debug: tint cells by layer
-uniform float uMotion;     // 0 at rest .. 1 at speed: backdrop text fades to a colour wash so fast scrolling does not strobe
 uniform vec4 uQZ[16]; uniform int uQN;   // ship quiet zones: xy = centre (cells), z = hull radius (cell widths), w = allegiance (0 player, 1 hostile, 2 neutral)
 out vec4 o;
 ${GLYPH_COV}
@@ -512,7 +514,7 @@ void main(){
     }
     float mx = max(max(s.r, s.g), s.b) + 1e-4;
     vec3 hue = s.rgb / mx;
-    hue = mix(vec3(dot(hue, vec3(0.333))), hue, 1.15);
+    hue = mix(vec3(dot(hue, vec3(0.333))), hue, 1.5);   // vivid: keep the colour, not a washed pastel
     fg = hue * (uFgBase + uFgGain * l);
     bg = s.rgb * uBgK;
     if (s.a > 0.0) {                                  // glyph cell: borrow the backdrop from a plain neighbour (no black box, no filled slab)
@@ -552,7 +554,6 @@ void main(){
     fg = t * max(0.25, dot(fg, vec3(0.333))); bg = t * 0.03;
   }
   float cov = g == 0 ? 0.0 : glyphCov(g, loc);
-  if (ma.a <= 0.0 && s.a <= 0.0) cov *= 1.0 - 0.8 * uMotion;   // plain backdrop cells only; stars, bodies, ships keep their glyphs
   o = vec4(mix(bg, fg, cov), 1.0);
 }`;
 
