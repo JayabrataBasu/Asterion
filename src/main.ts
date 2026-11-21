@@ -1,6 +1,8 @@
 import { PRESETS, settings } from './core/config';
 import { ACTIONS, DEFAULT_BINDS, loadSave, writeSave, type Action } from './core/save';
 import { PerfHud } from './dev/perfHud';
+import { mountTuner } from './dev/tune';
+import { shipById } from './sim/ships';
 import { FrameBuilder } from './gfx/draw';
 import { panel, panelOrigin } from './gfx/menu';
 import { Renderer } from './gfx/renderer';
@@ -148,7 +150,7 @@ function controlsCard(): MenuDef {
     lines: [
       row('THRUST', k('thrust') + ' / UP'), row('TURN', k('left') + ' ' + k('right') + ' / ARROWS'), row('BRAKE', k('brake') + ' / DOWN'),
       row('FIRE', k('fire') + (mouseAim ? ' / CLICK' : '')), row('BOOST', 'HOLD ' + k('boost')), row('DODGE', k('dodge') + '  (BRIEF INVULN.)'),
-      row('MISSILE', k('missile') + '  (NEEDS UPGRADE)'), row('DOCK / SHOP', k('dock') + '  AT STATION RING'),
+      row('STRAFE', k('strafeL') + ' / ' + k('strafeR')), row('MISSILE', k('missile') + '  (NEEDS UPGRADE)'), row('DOCK / SHOP', k('dock') + '  AT STATION RING'),
       row('MAP', 'N'), row('PAUSE', 'P / ESC'), row('MOUSE AIM', 'ON/OFF IN OPTIONS'),
     ],
     footer: 'REBIND ANY KEY UNDER  REBIND KEYS',
@@ -248,8 +250,8 @@ function onKey(code: string): void {
     case 'Digit3': applyPreset('high'); break;
     case 'Digit4': applyPreset('ultra'); break;
     case 'KeyB': settings.bloom = settings.bloom > 0 ? 0 : 1; say('bloom ' + (settings.bloom ? 'on' : 'off')); break;
-    case 'KeyC': settings.curve = settings.curve > 0 ? 0 : 0.05; say('crt ' + (settings.curve ? 'on' : 'off')); break;
-    case 'KeyG': settings.chroma = settings.chroma > 0 ? 0 : 0.005; say('aberration ' + (settings.chroma ? 'on' : 'off')); break;
+    case 'F7': settings.curve = settings.curve > 0 ? 0 : 0.05; say('crt ' + (settings.curve ? 'on' : 'off')); break;
+    case 'F8': settings.chroma = settings.chroma > 0 ? 0 : 0.005; say('aberration ' + (settings.chroma ? 'on' : 'off')); break;
     case 'KeyH': settings.hud = !settings.hud; break;
     case 'KeyT': settings.ramp = (settings.ramp + 1) % RAMPS.length; say('ramp: ' + RAMPS[settings.ramp].name); break;
     case 'KeyQ': settings.auto = !settings.auto; if (!settings.auto) { govLevel = 3; applyGov(); } say('auto-quality ' + (settings.auto ? 'on' : 'off')); break;
@@ -260,6 +262,7 @@ function onKey(code: string): void {
   }
 }
 addEventListener('keydown', e => {
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;     // typing in the tuning panel
   if (BLOCK.has(e.code) || (e.code === 'Backquote')) e.preventDefault();
   if (e.repeat) { if (state !== 'play' && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) menuKey(e.code); return; }
   keys.add(e.code);
@@ -293,6 +296,8 @@ function pollPad(): { m: number; aim: boolean; ang: number } {
   if (b(5) || b(6)) out.m |= In.Boost;
   if (b(1)) out.m |= In.Dodge;
   if (b(4)) out.m |= In.Missile;
+  if (b(14)) out.m |= In.StrafeL;
+  if (b(15)) out.m |= In.StrafeR;
   if (b(2)) out.m |= In.Brake;
   if (rx * rx + ry * ry > 0.25) { out.aim = true; out.ang = Math.atan2(-ry, rx); }
   // edge-triggered menu / interact buttons
@@ -346,6 +351,8 @@ function pollInput(): number {
   if (held('boost')) m |= In.Boost;
   if (held('dodge')) m |= In.Dodge;
   if (held('missile')) m |= In.Missile;
+  if (held('strafeL')) m |= In.StrafeL;
+  if (held('strafeR')) m |= In.StrafeR;
   const pad = pollPad();
   m |= pad.m;
   if (mouseAim && mouseMoved) { if (mouseDown & 1) m |= In.Fire; if (mouseDown & 4) m |= In.Thrust; if (mouseDown & 2) m |= In.Missile; }
@@ -381,6 +388,8 @@ function pollInput(): number {
   if (q.has('obj')) { sim.objTier = parseInt(q.get('obj')!, 10) | 0; sim.objKills = 0; sim.step(); }
   if (q.has('hud') && q.get('hud') === '0') settings.hud = false;
   if (q.has('perf')) { settings.perf = true; perf.show(true); }
+  if (q.has('ship')) sim.setShip(shipById(q.get('ship')!));
+  if (q.has('tune')) mountTuner(sim, id => sim.setShip(shipById(id)));
 }
 function finishTutQuiet(): void { tut = 99; }
 snapBase();

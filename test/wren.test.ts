@@ -1,13 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import REF from './fixtures/wren-trace.json';
 import { In, Sim } from '../src/sim/sim';
 
 /**
  * Wren regression: the ShipDef refactor must leave the original ship's handling bit-for-bit identical.
- * The fixture was recorded from the pre-refactor sim (UPDATE_TRACE=1 regenerates it — only do that on purpose).
+ * The fixture was recorded from the pre-refactor sim (commit 'M1: record pre-refactor Wren flight trace fixture').
  */
-const FIX = new URL('./fixtures/wren-trace.json', import.meta.url);
-
 function trace(): number[][] {
   const out: number[][] = [];
   const cases = [
@@ -35,8 +33,7 @@ function trace(): number[][] {
 describe('Wren regression', () => {
   it('matches the pre-refactor flight trace exactly', () => {
     const t = trace();
-    if (process.env.UPDATE_TRACE || !existsSync(FIX)) writeFileSync(FIX, JSON.stringify(t));
-    const ref = JSON.parse(readFileSync(FIX, 'utf8')) as number[][];
+    const ref = REF as number[][];
     expect(t.length).toBe(ref.length);
     for (let i = 0; i < t.length; i++) expect(t[i]).toEqual(ref[i]);
   }, 60000);

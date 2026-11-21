@@ -1,6 +1,7 @@
 import { Rng, TAU, clamp, hash2, wrapAngle } from '../core/util';
 import { SpatialHash } from './spatial';
 import { MAX_PLANETS, PLANET_STRIDE, gravReach, SECTOR, STATION_MULT, hasStation, planetParams, planetsNear, sectorOf, stationType } from './world';
+import { ENEMY, FLIGHT, WREN, assignShip, cloneShip, type ShipDef } from './ships';
 
 /**
  * Headless, allocation-free simulation core. Everything is struct-of-arrays; the renderer only reads.
@@ -16,7 +17,7 @@ const HASH_CELL = 24;
 
 export const enum Kind { None = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine = 4, Asteroid = 5, Station = 6, Boss = 7, Sniper = 8, Splitter = 9, Tender = 10, Rammer = 11, Freighter = 12, Comet = 13, Hauler = 14 }
 export const enum St { Patrol = 0, Chase = 1, Attack = 2, Flee = 3 }
-export const enum In { Missile = 128, Thrust = 1, Left = 2, Right = 4, Brake = 8, Fire = 16, Boost = 32, Dodge = 64 }
+export const enum In { Missile = 128, Thrust = 1, Left = 2, Right = 4, Brake = 8, Fire = 16, Boost = 32, Dodge = 64, StrafeL = 256, StrafeR = 512 }
 export const enum Ev { PlayerShot = 1, EnemyShot = 2, Hit = 3, Explosion = 4, ShipHit = 5, Kill = 6, Charge = 7, Pickup = 8, Dash = 9, Boss = 10, Objective = 11, Dock = 12, Missile = 13, Heal = 14 }
 export const enum Up { Gun = 0, Hull = 1, Boost = 2, Thrust = 3, Magnet = 4, Spread = 5, Missile = 6 }
 export const UP_N = 7, UP_MAX = 5;
@@ -29,21 +30,14 @@ export const enum PK { Spark = 0, Exhaust = 1, Debris = 2, Smoke = 3, Flash = 4 
 export const enum Col { Fire = 0, Cyan = 1, Red = 2, White = 3, Gray = 4, Green = 5, Magenta = 6, Amber = 7 }
 
 export const PROF_NAMES = ['ship', 'world', 'ents', 'bolts', 'misc', 'fx'];
-export const SHIP_R = 2.4;
-/** Ship handling feel — tune here. TURN is only used by mouse aim now. */
-const HANDLING = { TURN_MAX: 2.6, TURN_ACC: 9, TURN_DECAY: 12, GRIP: 0.8, GRIP_COAST: 0.25, GRIP_FWD: 0.5 };   // GRIP applies under thrust; GRIP_COAST while coasting, so drift survives a flip
 /** Aim assist tuning. Modes: 0 off, 1 wide hits, 2 cone lead, 3 soft homing. */
 export const AIM_ASSIST = { A_BONUS: 1.2, B_CONE: 8 * Math.PI / 180, B_FULL: 3 * Math.PI / 180, B_RANGE: 260, C_CONE: 25 * Math.PI / 180, C_RANGE: 180, C_TURN: 1.6 };
-const TURN = 3.7, THRUST = 78, MAX_SPEED = 118, BOOST_SPEED = 190;
 const GRAV_K = 9.5;   // pull is independent of planet size; reach (gravReach) is capped so giants are not bigger magnets
 const AST_R = [0, 2.4, 4.3, 6.7];
 
-const KIND_R = [0, 1.8, 3.6, 3.0, 1.6, 0, 11.5, 10, 3.0, 2.6, 3.4, 1.8, 5.0, 4.5, 4.2];
-const KIND_HP = [0, 2, 9, 6, 1, 0, 1e9, 110, 5, 3, 8, 2, 40, 1e9, 6];
-const KIND_SPEED = [0, 64, 42, 34, 0, 0, 0, 24, 30, 56, 28, 96, 14, 90, 14];
-const KIND_ACCEL = [0, 120, 60, 44, 0, 0, 0, 34, 44, 110, 40, 200, 10, 0, 0];
-const KIND_TURN = [0, 7, 3.4, 2.4, 0, 0, 0, 1.6, 3.0, 6, 2.2, 9, 1, 0, 0];
-const KIND_AGGRO = [0, 210, 230, 260, 0, 0, 0, 420, 330, 220, 250, 300, 0, 0, 0];
+/** Enemy stats come from the shared ShipDef schema (ENEMY in ships.ts); flat arrays keep the hot loop cheap. */
+const KIND_R = ENEMY.map(e => e.radius), KIND_HP = ENEMY.map(e => e.hullMax), KIND_SPEED = ENEMY.map(e => e.maxSpeed);
+const KIND_ACCEL = ENEMY.map(e => e.thrustFwd / e.mass), KIND_TURN = ENEMY.map(e => e.turnRate), KIND_AGGRO = ENEMY.map(e => e.sensorRange);
 const ATK_IN = [0, 120, 90, 90, 0, 0, 0, 170, 230, 115, 0, 400, 0, 0, 0], ATK_OUT = [0, 170, 130, 130, 0, 0, 0, 240, 300, 165, 0, 520, 0, 0, 0];
 const ORBIT = [0, 62, 62, 62, 0, 0, 0, 115, 170, 0, 0, 0, 0, 0, 0], FIRE_D = [0, 100, 125, 125, 0, 0, 0, 210, 280, 0, 0, 0, 0, 0, 0];
 const DROP = [0, 2, 5, 4, 0, 0, 0, 40, 6, 3, 5, 2, 0, 0, 0];
@@ -67,7 +61,11 @@ export class Sim {
   // ---- progression (up/scrap persist across reset(); main banks them at stations)
   readonly up = new Int8Array(UP_N);
   scrap = 0; scrapTotal = 0; boostMax = 100;
-  shots = 0; hits = 0; dashCd = 0;
+  /** The flown hull. Mutated in place by setShip() and the tuning panel; everything ship-specific reads it. */
+  readonly ship: ShipDef = cloneShip(WREN);
+  dashN = 1; private dashLock = 0;
+  setShip(d: ShipDef): void { assignShip(this.ship, d); this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.dashN = this.ship.dashCharges; }
+  shots = 0; hits = 0; dashCd = 0; muzzleT = 0; hpIdx = 0;
   /** Sector events: warn 0 none / 1 comet / 2 meteors / 3 flare / 4 storm; warnT counts the warning down; flare/storm are 0..1 envelopes. */
   warn = 0; warnT = 0; flare = 0; storm = 0;
   private wasBoost = false;
@@ -84,7 +82,7 @@ export class Sim {
   readonly mang = new Float32Array(MAX_M); readonly mspd = new Float32Array(MAX_M);
   readonly mlife = new Float32Array(MAX_M); readonly mtgt = new Int16Array(MAX_M);
   private mcur = 0;
-  get missileCap(): number { return this.up[Up.Missile] > 0 ? 3 + 2 * this.up[Up.Missile] : 0; }
+  get missileCap(): number { return this.ship.missileCap + (this.up[Up.Missile] > 0 ? 3 + 2 * this.up[Up.Missile] : 0); }
   get objType(): number { return this.objTier % 6; }
   /** Index of the escorted freighter (-1 when none) and how many mission failures this run. */
   frIdx = -1; escortFails = 0;
@@ -93,7 +91,8 @@ export class Sim {
   readonly scvx = new Float32Array(MAX_S); readonly scvy = new Float32Array(MAX_S);
   readonly scl = new Float32Array(MAX_S); readonly scv = new Float32Array(MAX_S);
   private scur = 0;
-  get hpMax(): number { return 100 + 25 * this.up[Up.Hull]; }
+  get hpMax(): number { return this.ship.hullMax + 25 * this.up[Up.Hull]; }
+  get tractorR(): number { return this.ship.tractor + 16 * this.up[Up.Magnet]; }
   /** 0 calm, 1 build, 2 peak, 3 lull (90 s cycle) */
   get phase(): number { const c = this.time % 90; return c < 20 ? 0 : c < 50 ? 1 : c < 75 ? 2 : 3; }
 
@@ -187,7 +186,7 @@ export class Sim {
     this.shake = 0; this.flash = 0; this.input = 0;
     this.alive = true; this.deadT = 0;
     this.sx = 0; this.sy = 0; this.svx = 0; this.svy = 0; this.sa = 0.3; this.spx = 0; this.spy = 0; this.spa = 0.3;
-    this.boostMax = 100 + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
+    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
     this.objKills = 0; this.objTarget = 6; this.objTier = 0; this.nextBoss = 150; this.frIdx = -1; this.escortFails = 0; this.sw = 0;
     this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
     this.caches.clear(); this.slowT = 0; this.bossKills = 0; this.missiles = this.missileCap; this.missileCd = 0; this.mlife.fill(0); this.eshield.fill(0);
@@ -235,47 +234,53 @@ export class Sim {
 
   // ===================================================================== ship
   private updateShip(): void {
-    const inp = this.input;
+    const inp = this.input, S = this.ship, R = S.radius, rk = R / 2.4, mk = S.mass / 100;
     this.spx = this.sx; this.spy = this.sy; this.spa = this.sa;
     let turn = 0;
     if (inp & In.Left) turn += 1;
     if (inp & In.Right) turn -= 1;
-    this.boostMax = 100 + 25 * this.up[Up.Boost];
-    if (this.aimOn) { this.sw = 0; const da = wrapAngle(this.aimAng - this.sa); this.sa += clamp(da * 8, -TURN * DT * 1.15, TURN * DT * 1.15); }
+    this.boostMax = S.boostCap + 25 * this.up[Up.Boost];
+    if (this.aimOn) { this.sw = 0; const tr = S.turnRate * FLIGHT.AIM_TURN_K, da = wrapAngle(this.aimAng - this.sa); this.sa += clamp(da * 8, -tr * DT * 1.15, tr * DT * 1.15); }
     else {
-      if (turn !== 0) this.sw = clamp(this.sw + turn * HANDLING.TURN_ACC * DT, -HANDLING.TURN_MAX, HANDLING.TURN_MAX);
-      else this.sw = Math.abs(this.sw) < 1e-4 ? 0 : this.sw * Math.exp(-HANDLING.TURN_DECAY * DT);
+      if (turn !== 0) this.sw = clamp(this.sw + turn * S.turnAccel * DT, -S.turnRate, S.turnRate);
+      else this.sw = Math.abs(this.sw) < 1e-4 ? 0 : this.sw * Math.exp(-S.turnAccel * FLIGHT.TURN_DECAY_K * DT);
       this.sa += this.sw * DT;
     }
-    this.dashCd -= DT;
+    this.dashCd -= DT; this.dashLock -= DT;
     const ca = Math.cos(this.sa), sa = Math.sin(this.sa);
 
     this.thrusting = false; this.boosting = false;
     if (inp & In.Thrust) {
-      let a = THRUST * (1 + 0.08 * this.up[Up.Thrust]);
-      if ((inp & In.Boost) && this.boostE > 1) { a *= 1.9; this.boostE -= 30 * DT; this.boosting = true; }
+      let a = S.thrustFwd / S.mass * (1 + 0.08 * this.up[Up.Thrust]);
+      if ((inp & In.Boost) && this.boostE > 1) { a *= S.boostMult; this.boostE -= S.boostDrain * DT; this.boosting = true; }
       this.svx += ca * a * DT; this.svy += sa * a * DT;
       this.thrusting = true;
     }
+    const strafe = ((inp & In.StrafeL) ? 1 : 0) - ((inp & In.StrafeR) ? 1 : 0);
+    if (strafe !== 0) { const a = S.thrustLat / S.mass * strafe; this.svx -= sa * a * DT; this.svy += ca * a * DT; }
     if (this.boosting && !this.wasBoost && this.boostE > 15) this.ring(this.sx, this.sy, 12, Col.Cyan);
     this.wasBoost = this.boosting;
-    if (!this.boosting) this.boostE = Math.min(this.boostMax, this.boostE + 9 * DT * (1 - 0.7 * this.storm));
-    if ((inp & In.Dodge) && this.dashCd <= 0) {
-      this.dashCd = 1.3; this.invuln = Math.max(this.invuln, 0.3); this.ring(this.sx, this.sy, 16, Col.Cyan);
-      this.svx += ca * 70; this.svy += sa * 70; this.emit(Ev.Dash, this.sx, this.sy, 1);
-      this.sparks(this.sx - ca * 6, this.sy - sa * 6, 10, Col.Cyan, 50);
+    if (!this.boosting) this.boostE = Math.min(this.boostMax, this.boostE + S.boostRegen * DT * (1 - 0.7 * this.storm));
+    if (S.dashCharges <= 1) {
+      if ((inp & In.Dodge) && this.dashCd <= 0) this.dash(ca, sa, S.dashCooldown);
+    } else {                                                   // multi-charge dash: charges refill one per cooldown
+      if (this.dashCd <= 0 && this.dashN < S.dashCharges) { this.dashN++; this.dashCd = this.dashN < S.dashCharges ? S.dashCooldown : 0; }
+      if ((inp & In.Dodge) && this.dashN > 0 && this.dashLock <= 0) { this.dashN--; this.dashLock = 0.25; this.dash(ca, sa, this.dashCd > 0 ? this.dashCd : S.dashCooldown); }
     }
     this.missileCd -= DT;
     this.missiles = Math.min(this.missileCap, this.missiles + DT / 7);
     if ((inp & In.Missile) && this.missileCd <= 0 && this.missiles >= 1) this.launchMissile(ca, sa);
     {   // grip: bleed sideways velocity and hand part of it to the nose, so turns bend the path
       const vf = this.svx * ca + this.svy * sa, vl = -this.svx * sa + this.svy * ca;
-      const lat = vl * Math.exp(-(this.thrusting ? HANDLING.GRIP : HANDLING.GRIP_COAST) * DT), nf = vf + Math.abs(vl - lat) * HANDLING.GRIP_FWD;
+      const lat = vl * Math.exp(-(this.thrusting ? S.grip : S.grip * FLIGHT.GRIP_COAST_K) * DT), nf = vf + Math.abs(vl - lat) * FLIGHT.GRIP_FWD;
       this.svx = ca * nf - sa * lat; this.svy = sa * nf + ca * lat;
     }
-    if (this.assist && !(inp & In.Thrust)) { const k2 = Math.exp(-0.9 * DT); this.svx *= k2; this.svy *= k2; }
-    if (inp & In.Brake) { const k = Math.exp(-2.8 * DT); this.svx *= k; this.svy *= k; }
-    const drag = Math.exp(-0.09 * DT);
+    if (this.assist && !(inp & In.Thrust)) { const k2 = Math.exp(-S.assist * DT); this.svx *= k2; this.svy *= k2; }
+    if (inp & In.Brake) {
+      const k = Math.exp(-S.brake * DT); this.svx *= k; this.svy *= k;
+      if (S.thrustRev > 0 && this.svx * this.svx + this.svy * this.svy < 16) { const a = S.thrustRev / S.mass; this.svx -= ca * a * DT; this.svy -= sa * a * DT; }
+    }
+    const drag = Math.exp(-FLIGHT.DRAG * DT);
     this.svx *= drag; this.svy *= drag;
 
     // planet gravity + collision
@@ -286,17 +291,17 @@ export class Sim {
       const reach = gravReach(r);
       if (d < r + reach) {
         const fall = 1 - Math.max(0, d - r) / reach;
-        const g = GRAV_K * fall;
+        const g = GRAV_K * fall * S.gravSusceptibility;
         this.svx += dx / d * g * DT; this.svy += dy / d * g * DT;
       }
-      if (d > r + SHIP_R && d < r + SHIP_R + 7 && (this.svx * this.svx + this.svy * this.svy) > 900) {   // atmosphere skim: speed boost, heat
+      if (d > r + R && d < r + R + 7 && (this.svx * this.svx + this.svy * this.svy) > 900) {   // atmosphere skim: speed boost, heat
         const k3 = 1 + 0.35 * DT; this.svx *= k3; this.svy *= k3;
         this.hp = Math.max(1, this.hp - 3 * DT);
         if ((this.tick & 3) === 0) this.sparks(this.sx, this.sy, 1, Col.Fire, 30);
       }
-      if (d < r + SHIP_R) {
+      if (d < r + R) {
         const nx = -dx / d, ny = -dy / d;                // outward normal
-        this.sx = this.pl[o] + nx * (r + SHIP_R); this.sy = this.pl[o + 1] + ny * (r + SHIP_R);
+        this.sx = this.pl[o] + nx * (r + R); this.sy = this.pl[o + 1] + ny * (r + R);
         const vn = this.svx * nx + this.svy * ny;
         if (vn < 0) {
           this.svx -= 1.6 * vn * nx; this.svy -= 1.6 * vn * ny;
@@ -306,21 +311,27 @@ export class Sim {
     }
 
     const sp = Math.sqrt(this.svx * this.svx + this.svy * this.svy);
-    const maxS = this.boosting ? BOOST_SPEED : MAX_SPEED;
-    if (sp > maxS) { const f = 1 - 2.5 * DT * (1 - maxS / sp); this.svx *= f; this.svy *= f; }
+    const maxS = this.boosting ? S.maxSpeed * FLIGHT.BOOST_TOP_K : S.maxSpeed;
+    if (sp > maxS) { const f = 1 - FLIGHT.SPEED_CAP_K * DT * (1 - maxS / sp); this.svx *= f; this.svy *= f; }
     this.sx += this.svx * DT; this.sy += this.svy * DT;
 
-    // weapons
+    // weapons: one bolt per cooldown from the next hardpoint (fixed fire along the nose, turrets track the nearest hostile)
     this.assistTarget = this.aimAssist === 2 ? this.findAimTarget(this.sx, this.sy, this.sa, AIM_ASSIST.B_CONE, AIM_ASSIST.B_RANGE)
       : this.aimAssist === 3 ? this.findAimTarget(this.sx, this.sy, this.sa, AIM_ASSIST.C_CONE, AIM_ASSIST.C_RANGE) : -1;
     this.cool -= DT;
+    const nhp = S.hardpoints.length;
     if ((inp & In.Fire) && this.cool <= 0) {
-      this.cool = 0.105 * (1 - 0.07 * this.up[Up.Gun]); this.shots++;
+      this.cool = FLIGHT.FIRE_COOL * 2 / nhp / S.fireRateMult * (1 - 0.07 * this.up[Up.Gun]); this.shots++;
       this.gunSide = -this.gunSide;
-      const jit = (this.rng.next() - 0.5) * 0.03;
-      const ox = this.sx + ca * 9.5, oy = this.sy + sa * 9.5;
+      this.hpIdx = (this.hpIdx + 1) % nhp;
+      const turret = S.hardpoints[this.hpIdx] === 'turret', lat = S.muzzle ? S.muzzle[this.hpIdx] ?? 0 : 0;
+      const jit = (this.rng.next() - 0.5) * S.spread;
+      const fwd = FLIGHT.MUZZLE * rk, ox = this.sx + ca * fwd - sa * lat, oy = this.sy + sa * fwd + ca * lat;
       let ba = this.sa + jit;
-      if (this.aimAssist === 2) {
+      if (turret) {
+        const tg = this.findAimTarget(ox, oy, this.sa, Math.PI, 240);
+        if (tg >= 0) { const dx = this.ex[tg] - ox, dy = this.ey[tg] - oy, tt = Math.sqrt(dx * dx + dy * dy) / FLIGHT.BOLT_SPEED; ba = Math.atan2(dy + (this.evy[tg] - this.svy * 0.5) * tt, dx + (this.evx[tg] - this.svx * 0.5) * tt) + jit; }
+      } else if (this.aimAssist === 2) {
         const tg = this.findAimTarget(ox, oy, this.sa, AIM_ASSIST.B_CONE, AIM_ASSIST.B_RANGE);
         if (tg >= 0) {
           const dx = this.ex[tg] - ox, dy = this.ey[tg] - oy, tt = Math.sqrt(dx * dx + dy * dy) / 215;
@@ -330,16 +341,18 @@ export class Sim {
           ba += clamp(wrapAngle(Math.atan2(ly - oy, lx - ox) - ba), -AIM_ASSIST.B_CONE, AIM_ASSIST.B_CONE) * w;   // never bend more than the cone, even for a fast crosser
         }
       }
-      const bc = Math.cos(ba), bs = Math.sin(ba);
-      const dm = 1 + 0.3 * this.up[Up.Gun];
-      this.spawnBullet(ox, oy, this.svx * 0.5 + bc * 215, this.svy * 0.5 + bs * 215, 1.05, 0, dm);
+      const bc = Math.cos(ba), bs = Math.sin(ba), bsp = FLIGHT.BOLT_SPEED * S.boltSpeedMult;
+      const dm = (1 + 0.3 * this.up[Up.Gun]) * S.damageMult;
+      this.spawnBullet(ox, oy, this.svx * 0.5 + bc * bsp, this.svy * 0.5 + bs * bsp, 1.05, 0, dm);
       if (this.up[Up.Spread] > 0) for (let sd = -1; sd <= 1; sd += 2) {
-        const sa2 = ba + sd * 0.13;
-        this.spawnBullet(ox, oy, this.svx * 0.5 + Math.cos(sa2) * 205, this.svy * 0.5 + Math.sin(sa2) * 205, 0.9, 0, dm * 0.5 + 0.1 * this.up[Up.Spread]);
+        const sa2 = ba + sd * 0.13, ssp = FLIGHT.SIDE_SPEED * S.boltSpeedMult;
+        this.spawnBullet(ox, oy, this.svx * 0.5 + Math.cos(sa2) * ssp, this.svy * 0.5 + Math.sin(sa2) * ssp, 0.9, 0, dm * 0.5 + 0.1 * this.up[Up.Spread]);
       }
-      this.svx -= ca * 0.35; this.svy -= sa * 0.35;
+      this.svx -= ca * FLIGHT.KICK / mk; this.svy -= sa * FLIGHT.KICK / mk;
+      this.muzzleT = 0.06;
       this.emit(Ev.PlayerShot, ox, oy, 1);
     }
+    if (this.muzzleT > 0) this.muzzleT -= DT;
 
     // exhaust
     if (this.thrusting) {
@@ -347,13 +360,13 @@ export class Sim {
       for (let i = 0; i < n; i++) {
         const spread = (this.rng.next() - 0.5) * 0.35;
         const ea = this.sa + Math.PI + spread, v = 38 + this.rng.next() * 30 + (this.boosting ? 30 : 0);
-        const side = (this.rng.next() < 0.5 ? 2.0 : -2.0);
-        const tx = this.sx - ca * (7.4 + this.rng.next() * 2) - sa * side, ty = this.sy - sa * (7.4 + this.rng.next() * 2) + ca * side;
+        const side = (this.rng.next() < 0.5 ? 2.0 : -2.0) * rk;
+        const tx = this.sx - ca * (7.4 + this.rng.next() * 2) * rk - sa * side, ty = this.sy - sa * (7.4 + this.rng.next() * 2) * rk + ca * side;
         this.spawnParticle(tx, ty, this.svx * 0.55 + Math.cos(ea) * v, this.svy * 0.55 + Math.sin(ea) * v,
           0.36 + this.rng.next() * 0.5, PK.Exhaust, this.boosting ? Col.Cyan : Col.Fire, 1);
       }
       if (this.boosting && (this.tick & 1) === 0)            // long glowing boost wake that hangs in space
-        this.spawnParticle(this.sx - ca * 8, this.sy - sa * 8, this.svx * 0.9 + (this.rng.next() - 0.5) * 6, this.svy * 0.9 + (this.rng.next() - 0.5) * 6, 0.9 + this.rng.next() * 0.5, PK.Exhaust, Col.Cyan, 1);
+        this.spawnParticle(this.sx - ca * 8 * rk, this.sy - sa * 8 * rk, this.svx * 0.9 + (this.rng.next() - 0.5) * 6, this.svy * 0.9 + (this.rng.next() - 0.5) * 6, 0.9 + this.rng.next() * 0.5, PK.Exhaust, Col.Cyan, 1);
     }
     if (this.hp < 35 && (this.tick & 3) === 0) {
       this.spawnParticle(this.sx + (this.rng.next() - 0.5) * 6, this.sy + (this.rng.next() - 0.5) * 3, this.svx * 0.8, this.svy * 0.8 + 6, 0.8 + this.rng.next() * 0.6, PK.Smoke, Col.Gray, 1);
@@ -364,7 +377,14 @@ export class Sim {
       const vx = this.sx - ca * 1.5 + sa * 2.2, vy = this.sy - sa * 1.5 - ca * 2.2, v = 22 + 30 * pulse;
       this.spawnParticle(vx, vy, this.svx * 0.6 + sa * v + (this.rng.next() - 0.5) * 8, this.svy * 0.6 - ca * v + (this.rng.next() - 0.5) * 8, 0.35 + this.rng.next() * 0.35, PK.Exhaust, Col.Cyan, 1);
     }
-    if (this.time - this.lastHit > 5 && this.hp < this.hpMax) this.hp = Math.min(this.hpMax, this.hp + 3.5 * DT);
+    if (this.time - this.lastHit > S.hullRegenDelay && this.hp < this.hpMax) this.hp = Math.min(this.hpMax, this.hp + S.hullRegen * DT);
+  }
+
+  private dash(ca: number, sa: number, cd: number): void {
+    const S = this.ship;
+    this.dashCd = cd; this.invuln = Math.max(this.invuln, S.dashIFrames); this.ring(this.sx, this.sy, 16, Col.Cyan);
+    this.svx += ca * S.dashImpulse; this.svy += sa * S.dashImpulse; this.emit(Ev.Dash, this.sx, this.sy, 1);
+    this.sparks(this.sx - ca * 6, this.sy - sa * 6, 10, Col.Cyan, 50);
   }
 
   damageShip(d: number, nx: number, ny: number): void {
@@ -374,7 +394,7 @@ export class Sim {
     this.hitAng = Math.atan2(-ny, -nx); this.hitT = 1;
     this.emit(Ev.ShipHit, this.sx, this.sy, d);
     this.shake = Math.min(14, this.shake + 2 + d * 0.25);
-    this.svx += nx * d * 0.4; this.svy += ny * d * 0.4;
+    this.svx += nx * d * 0.4 / (this.ship.mass / 100); this.svy += ny * d * 0.4 / (this.ship.mass / 100);
     if (this.hp <= 0) {
       this.hp = 0; this.alive = false; this.deadT = 0;
       this.explode(this.sx, this.sy, 3.2, Col.Cyan);
@@ -536,7 +556,7 @@ export class Sim {
     const x = this.ex[i], y = this.ey[i], ca = Math.cos(this.ea[i]), sa = Math.sin(this.ea[i]);
     for (let n = 0; n < 2; n++) this.spawnParticle(x - ca * 3 + (this.rng.next() - 0.5) * 3, y - sa * 3 + (this.rng.next() - 0.5) * 2, -ca * (10 + this.rng.next() * 20), -sa * (10 + this.rng.next() * 20), 0.5 + this.rng.next() * 0.9, PK.Exhaust, n ? Col.Cyan : Col.White, 1);
     if (this.alive && this.et[i] <= 0) {
-      const dx = this.sx - x, dy = this.sy - y, rr = this.er[i] + SHIP_R + 1;
+      const dx = this.sx - x, dy = this.sy - y, rr = this.er[i] + this.ship.radius + 1;
       if (dx * dx + dy * dy < rr * rr) { const d = Math.sqrt(dx * dx + dy * dy) + 1e-4; this.damageShip(25, dx / d, dy / d); this.et[i] = 3; }
     }
     for (let e = 0; e < MAX_E; e++) {                       // anything caught in the comet is wiped out, except bosses, stations and escorts
@@ -717,7 +737,7 @@ export class Sim {
   }
 
   private updateScrap(): void {
-    const mr = 28 + 16 * this.up[Up.Magnet], mr2 = mr * mr;
+    const mr = this.tractorR, mr2 = mr * mr;
     for (let i = 0; i < MAX_S; i++) {
       if (this.scl[i] <= 0) continue;
       this.scl[i] -= DT;
@@ -763,12 +783,12 @@ export class Sim {
     const l = this.up[u];
     if (l >= UP_MAX || this.scrap < this.price(u)) return false;
     this.scrap -= this.price(u); this.up[u] = l + 1;
-    this.boostMax = 100 + 25 * this.up[Up.Boost];
+    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost];
     return true;
   }
 
   /** Free repair + refill while docked. */
-  serviceShip(): void { this.hp = this.hpMax; this.boostMax = 100 + 25 * this.up[Up.Boost]; this.boostE = this.boostMax; this.emit(Ev.Dock, this.sx, this.sy, 1); }
+  serviceShip(): void { this.hp = this.hpMax; this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.boostE = this.boostMax; this.emit(Ev.Dock, this.sx, this.sy, 1); }
 
   // ===================================================================== spatial hash + entities
   private rebuildHash(): void {
@@ -964,7 +984,7 @@ export class Sim {
         }
       }
     }
-    if (kind === Kind.Rammer && this.alive && d < this.er[i] + SHIP_R + 1.5) { this.killEnt(i, false); return; }
+    if (kind === Kind.Rammer && this.alive && d < this.er[i] + this.ship.radius + 1.5) { this.killEnt(i, false); return; }
 
     // ---- weapons
     if (wantFire && this.alive) {
@@ -1124,7 +1144,7 @@ export class Sim {
       if (this.ehp[e] <= 0) this.killEnt(e, byPlayer);
     }
     if (this.alive) {
-      const dx = this.sx - x, dy = this.sy - y, d2 = dx * dx + dy * dy, rr = radius + SHIP_R;
+      const dx = this.sx - x, dy = this.sy - y, d2 = dx * dx + dy * dy, rr = radius + this.ship.radius;
       if (d2 < rr * rr) {
         const d = Math.sqrt(d2) + 1e-4;
         this.damageShip(dmg * (1 - d / rr), dx / d, dy / d);
@@ -1141,7 +1161,7 @@ export class Sim {
         const k = this.ek[j];
         if (k === Kind.None || k === Kind.Mine || k === Kind.Comet) continue;
         const dx = this.sx - this.ex[j], dy = this.sy - this.ey[j];
-        const rr = this.er[j] + SHIP_R, d2 = dx * dx + dy * dy;
+        const rr = this.er[j] + this.ship.radius, d2 = dx * dx + dy * dy;
         if (d2 >= rr * rr) continue;
         const d = Math.sqrt(d2) + 1e-4, nx = dx / d, ny = dy / d;
         this.sx += nx * (rr - d); this.sy += ny * (rr - d);
@@ -1149,11 +1169,12 @@ export class Sim {
         const vn = rvx * nx + rvy * ny;
         if (vn < 0) {
           const imp = -vn;
+          const mk = this.ship.mass / 100;
           this.svx += nx * imp * 1.6; this.svy += ny * imp * 1.6;
-          this.evx[j] -= nx * imp * 0.5; this.evy[j] -= ny * imp * 0.5;
+          this.evx[j] -= nx * imp * 0.5 * mk; this.evy[j] -= ny * imp * 0.5 * mk;
           if (imp > 6) {
             this.damageShip(Math.min(30, imp * 0.35), nx, ny);
-            this.hitEnt(j, k === Kind.Asteroid ? 1 : 3, -nx * imp, -ny * imp);
+            this.hitEnt(j, (k === Kind.Asteroid ? 1 : 3) * mk, -nx * imp, -ny * imp);
           }
         }
       }
@@ -1211,7 +1232,7 @@ export class Sim {
       } else if (!dead && this.frIdx >= 0 && this.ek[this.frIdx] === Kind.Freighter && (nx - this.ex[this.frIdx]) ** 2 + (ny - this.ey[this.frIdx]) ** 2 < (KIND_R[Kind.Freighter] + 0.8) ** 2) {
         dead = true; this.hitEnt(this.frIdx, this.bdmg[i] * 0.6, this.bvx[i], this.bvy[i]);
       } else if (!dead && this.alive) {
-        const dx = nx - this.sx, dy = ny - this.sy, rr = SHIP_R + 0.6;
+        const dx = nx - this.sx, dy = ny - this.sy, rr = this.ship.radius + 0.6;
         if (dx * dx + dy * dy < rr * rr) {
           dead = true;
           const l = Math.sqrt(this.bvx[i] * this.bvx[i] + this.bvy[i] * this.bvy[i]) + 1e-4;

@@ -1,8 +1,8 @@
 /** Versioned localStorage persistence. Every access is guarded: private mode / disabled storage must never break the game. */
-export const ACTIONS = ['thrust', 'left', 'right', 'brake', 'fire', 'boost', 'dodge', 'dock', 'missile'] as const;
+export const ACTIONS = ['thrust', 'left', 'right', 'brake', 'fire', 'boost', 'dodge', 'dock', 'missile', 'strafeL', 'strafeR'] as const;
 export type Action = typeof ACTIONS[number];
 export const DEFAULT_BINDS: Record<Action, string> = {
-  thrust: 'KeyW', left: 'KeyA', right: 'KeyD', brake: 'KeyS', fire: 'Space', boost: 'ShiftLeft', dodge: 'KeyF', dock: 'KeyE', missile: 'KeyX',
+  thrust: 'KeyW', left: 'KeyA', right: 'KeyD', brake: 'KeyS', fire: 'Space', boost: 'ShiftLeft', dodge: 'KeyF', dock: 'KeyE', missile: 'KeyX', strafeL: 'KeyZ', strafeR: 'KeyC',
 };
 
 export interface SaveData {

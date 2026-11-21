@@ -3,6 +3,7 @@
 //   node scripts/golden.mjs                 compare (exit 1 on any scene above the tolerance)
 //   node scripts/golden.mjs update          regenerate baselines
 //   node scripts/golden.mjs shots <dir>     save full-size screenshots of every scene (for docs / before-after)
+//   node scripts/golden.mjs url '<query>' <file.png>   one ad-hoc screenshot
 //   GOLDEN_ONLY=a,b limits the scenes; CHROME=<path> picks the browser.
 // No dependencies: PNG decode/encode uses node:zlib. Baselines are per-machine regression guards (software GL), not cross-GPU truth.
 import { spawn, spawnSync } from 'node:child_process';
@@ -102,12 +103,14 @@ async function main() {
     const shotDir = MODE === 'shots' ? (process.argv[3] ?? join(root, 'docs', 'screens')) : null;
     if (shotDir) mkdirSync(shotDir, { recursive: true });
     let fail = 0;
-    for (const [name, q] of Object.entries(SCENES)) {
+    const list = MODE === 'url' ? [['adhoc', process.argv[3]]] : Object.entries(SCENES);
+    for (const [name, q] of list) {
       if (only && !only.includes(name)) continue;
       const file = join(tmp, name + '.png');
       spawnSync(chrome, ['--headless=new', '--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist', '--hide-scrollbars',
         `--user-data-dir=${join(tmp, 'prof')}`, '--window-size=1600,900', '--virtual-time-budget=3000', `--screenshot=${file}`, `http://localhost:${PORT}/?${q}`], { timeout: 120000, stdio: 'ignore' });
       if (!existsSync(file)) { console.log(`FAIL  ${name}: no screenshot`); fail = 1; continue; }
+      if (MODE === 'url') { writeFileSync(process.argv[4], readFileSync(file)); console.log('shot ' + process.argv[4]); continue; }
       if (shotDir) { writeFileSync(join(shotDir, name + '.png'), readFileSync(file)); console.log(`shot  ${name}`); continue; }
       const small = half(decodePng(readFileSync(file))), gold = join(root, 'test', 'golden', name + '.png');
       if (MODE === 'update') { writeFileSync(gold, encodePng(small)); console.log(`updated ${name}`); continue; }
