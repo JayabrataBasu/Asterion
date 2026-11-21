@@ -105,7 +105,6 @@ export class Sim {
   warn = 0; warnT = 0; flare = 0; storm = 0;
   /** Rare scale set pieces (progress 0..1, 0 = off): 5 a ringed giant eclipses the sun (45 s), 6 a megastructure crosses the sky (90 s). */
   ecl = 0; mega = 0; private eclT = 0; private megaT = 0; debugEvtP = 0;
-  private wasBoost = false;
   private flareT = 0; private stormT = 0; private meteorLeft = 0; private meteorCd = 0; private meteorAng = 0;
   private evtNext = 40; private lastEvt = 0; private haulCd = 45; nHaul = 0; private nHaulTmp = 0;
   aimAssist = 2; assistTarget = -1; sw = 0; assist = false; aimOn = false; aimAng = 0;
@@ -226,7 +225,7 @@ export class Sim {
     this.sx = 0; this.sy = 0; this.svx = 0; this.svy = 0; this.sa = 0.3; this.spx = 0; this.spy = 0; this.spa = 0.3;
     this.refreshShip(); this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.fuel = this.fuelMax; this.cruise = false; this.jumpT = 0; this.scanP = 0; this.scanIdx = -1; this.dist = 0; this.cargoBy.fill(0); this.cargoUsed = 0; this.poiDone.fill(0); this.heat = 0; this.overheat = false; this.firedT = 0; this.wingCd = 3; this.nWing = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
     this.objKills = 0; this.objTarget = 6; this.objTier = 0; this.nextBoss = 150; this.frIdx = -1; this.escortFails = 0; this.sw = 0;
-    this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.ecl = 0; this.mega = 0; this.eclT = 0; this.megaT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
+    this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.ecl = 0; this.mega = 0; this.eclT = 0; this.megaT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
     this.caches.clear(); this.slowT = 0; this.bossKills = 0; this.missiles = this.missileCap; this.missileCd = 0; this.mlife.fill(0); this.eshield.fill(0);
     this.cool = 0; this.lastHit = -99; this.invuln = 2; this.hitFlash = 0; this.sz = this.spz = 0; this.szBand = 0; this.prevIn = 0; this.ez.fill(0); this.eband.fill(0);
     this.evHead = this.evTail = 0; this.hitT = 0; this.echarge.fill(0);
@@ -304,8 +303,6 @@ export class Sim {
     }
     const strafe = ((inp & In.StrafeL) ? 1 : 0) - ((inp & In.StrafeR) ? 1 : 0);
     if (strafe !== 0) { const a = S.thrustLat / S.mass * strafe; this.svx -= sa * a * DT; this.svy += ca * a * DT; }
-    if (this.boosting && !this.wasBoost && this.boostE > 15) this.ring(this.sx, this.sy, 12, Col.Cyan);
-    this.wasBoost = this.boosting;
     if (!this.boosting) this.boostE = Math.min(this.boostMax, this.boostE + S.boostRegen * DT * (1 - 0.7 * (this.vert && this.sz < -V_TOL ? 0 : this.storm)));
     if (S.dashCharges <= 1) {
       if ((inp & In.Dodge) && this.dashCd <= 0) this.dash(ca, sa, S.dashCooldown);

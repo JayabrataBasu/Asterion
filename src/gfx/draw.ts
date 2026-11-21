@@ -594,7 +594,7 @@ export class FrameBuilder {
   /** Parallax dust motes that stretch into dashes with speed: cheap depth and a sense of motion. */
   private dust(time: number): void {
     const s = this.sim, b = this.r.glyphs, n = Math.round(72 * this.fx), W = this.cols * 1.7, H = this.rows * 1.7;
-    const spd = Math.hypot(s.svx, s.svy), len = spd > 60 ? Math.min(4, 1 + Math.floor(spd / 50)) : 1;
+    const len = 1;   // no speed streaking: only the hyperspace tunnel reacts to speed
     const dir = dir8(Math.atan2(s.svy / this.asp, s.svx)), vl = Math.hypot(s.svx, s.svy / this.asp) + 1e-6, ux = s.svx / vl, uy = s.svy / this.asp / vl;
     for (let i = 0; i < n; i++) {
       const pz = 0.25 + 0.9 * hash2(i, 11);
