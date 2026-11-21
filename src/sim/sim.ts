@@ -15,7 +15,9 @@ export const MAX_R = 24;
 export const MAX_GRP = 16;
 const HASH_CELL = 24;
 
-export const enum Kind { None = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine = 4, Asteroid = 5, Station = 6, Boss = 7, Sniper = 8, Splitter = 9, Tender = 10, Rammer = 11, Freighter = 12, Comet = 13, Hauler = 14 }
+export const enum Kind { None = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine = 4, Asteroid = 5, Station = 6, Boss = 7, Sniper = 8, Splitter = 9, Tender = 10, Rammer = 11, Freighter = 12, Comet = 13, Hauler = 14, Wing = 15 }
+/** Damage types, matched against ShipDef.resist. */
+export const enum Dmg { Kinetic = 0, Thermal = 1, Em = 2 }
 export const enum St { Patrol = 0, Chase = 1, Attack = 2, Flee = 3 }
 export const enum In { Missile = 128, Thrust = 1, Left = 2, Right = 4, Brake = 8, Fire = 16, Boost = 32, Dodge = 64, StrafeL = 256, StrafeR = 512 }
 export const enum Ev { PlayerShot = 1, EnemyShot = 2, Hit = 3, Explosion = 4, ShipHit = 5, Kill = 6, Charge = 7, Pickup = 8, Dash = 9, Boss = 10, Objective = 11, Dock = 12, Missile = 13, Heal = 14 }
@@ -38,9 +40,9 @@ const AST_R = [0, 2.4, 4.3, 6.7];
 /** Enemy stats come from the shared ShipDef schema (ENEMY in ships.ts); flat arrays keep the hot loop cheap. */
 const KIND_R = ENEMY.map(e => e.radius), KIND_HP = ENEMY.map(e => e.hullMax), KIND_SPEED = ENEMY.map(e => e.maxSpeed);
 const KIND_ACCEL = ENEMY.map(e => e.thrustFwd / e.mass), KIND_TURN = ENEMY.map(e => e.turnRate), KIND_AGGRO = ENEMY.map(e => e.sensorRange);
-const ATK_IN = [0, 120, 90, 90, 0, 0, 0, 170, 230, 115, 0, 400, 0, 0, 0], ATK_OUT = [0, 170, 130, 130, 0, 0, 0, 240, 300, 165, 0, 520, 0, 0, 0];
+const ATK_IN = [0, 120, 90, 90, 0, 0, 0, 170, 230, 115, 0, 400, 0, 0, 0, 0], ATK_OUT = [0, 170, 130, 130, 0, 0, 0, 240, 300, 165, 0, 520, 0, 0, 0, 0];
 const ORBIT = [0, 62, 62, 62, 0, 0, 0, 115, 170, 0, 0, 0, 0, 0, 0], FIRE_D = [0, 100, 125, 125, 0, 0, 0, 210, 280, 0, 0, 0, 0, 0, 0];
-const DROP = [0, 2, 5, 4, 0, 0, 0, 40, 6, 3, 5, 2, 0, 0, 0];
+const DROP = [0, 2, 5, 4, 0, 0, 0, 40, 6, 3, 5, 2, 0, 0, 0, 0];
 
 export class Sim {
   // ---- time / meta
@@ -64,6 +66,15 @@ export class Sim {
   /** The flown hull. Mutated in place by setShip() and the tuning panel; everything ship-specific reads it. */
   readonly ship: ShipDef = cloneShip(WREN);
   dashN = 1; private dashLock = 0;
+  /** Shield points, weapon energy, heat (overheat locks weapons until it falls below half), live signature multiplier. */
+  shield = 0; energy = 100; heat = 0; overheat = false; sigNow = 1; private firedT = 0;
+  /** Trade goods carried (units); Mule converts part of incoming damage into lost cargo. */
+  cargoUsed = 0;
+  /** Hive wingmen alive / relaunch cooldown. */
+  nWing = 0; wingCd = 0;
+  /** Scan progress 0..1 while the scan key is held (M5); drives Sextant's petals. */
+  scanP = 0;
+  get shieldMax(): number { return this.ship.shieldMax; }
   setShip(d: ShipDef): void { assignShip(this.ship, d); this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.dashN = this.ship.dashCharges; }
   shots = 0; hits = 0; dashCd = 0; muzzleT = 0; hpIdx = 0;
   /** Sector events: warn 0 none / 1 comet / 2 meteors / 3 flare / 4 storm; warnT counts the warning down; flare/storm are 0..1 envelopes. */
@@ -125,6 +136,7 @@ export class Sim {
   readonly blife = new Float32Array(MAX_B);
   readonly bdmg = new Float32Array(MAX_B);
   readonly bown = new Uint8Array(MAX_B);
+  readonly btype = new Uint8Array(MAX_B);
   private bcur = 0;
 
   // ---- particles
@@ -186,7 +198,7 @@ export class Sim {
     this.shake = 0; this.flash = 0; this.input = 0;
     this.alive = true; this.deadT = 0;
     this.sx = 0; this.sy = 0; this.svx = 0; this.svy = 0; this.sa = 0.3; this.spx = 0; this.spy = 0; this.spa = 0.3;
-    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
+    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.firedT = 0; this.wingCd = 3; this.nWing = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
     this.objKills = 0; this.objTarget = 6; this.objTier = 0; this.nextBoss = 150; this.frIdx = -1; this.escortFails = 0; this.sw = 0;
     this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
     this.caches.clear(); this.slowT = 0; this.bossKills = 0; this.missiles = this.missileCap; this.missileCd = 0; this.mlife.fill(0); this.eshield.fill(0);
@@ -320,7 +332,8 @@ export class Sim {
       : this.aimAssist === 3 ? this.findAimTarget(this.sx, this.sy, this.sa, AIM_ASSIST.C_CONE, AIM_ASSIST.C_RANGE) : -1;
     this.cool -= DT;
     const nhp = S.hardpoints.length;
-    if ((inp & In.Fire) && this.cool <= 0) {
+    if ((inp & In.Fire) && this.cool <= 0 && !this.overheat && this.energy >= 1) {
+      this.energy -= 1; this.heat += FLIGHT.SHOT_HEAT; this.firedT = 0.6;
       this.cool = FLIGHT.FIRE_COOL * 2 / nhp / S.fireRateMult * (1 - 0.07 * this.up[Up.Gun]); this.shots++;
       this.gunSide = -this.gunSide;
       this.hpIdx = (this.hpIdx + 1) % nhp;
@@ -353,6 +366,7 @@ export class Sim {
       this.emit(Ev.PlayerShot, ox, oy, 1);
     }
     if (this.muzzleT > 0) this.muzzleT -= DT;
+    this.updatePower(S);
 
     // exhaust
     if (this.thrusting) {
@@ -380,6 +394,62 @@ export class Sim {
     if (this.time - this.lastHit > S.hullRegenDelay && this.hp < this.hpMax) this.hp = Math.min(this.hpMax, this.hp + S.hullRegen * DT);
   }
 
+  /** Energy, heat, shields, signature and the hull-specific quirks that tick every frame. */
+  private updatePower(S: ShipDef): void {
+    this.energy = Math.min(S.energyMax, this.energy + S.energyRegen * DT);
+    if (this.boosting) this.heat += FLIGHT.BOOST_HEAT * DT;
+    this.heat = Math.max(0, this.heat - S.heatDissipation * DT);
+    if (this.heat > S.heatMax) { this.overheat = true; this.heat = Math.min(this.heat, S.heatMax * 1.25); this.hurt((this.heat - S.heatMax) * 0.4 * DT + 2 * DT, Dmg.Thermal); }
+    else if (this.overheat && this.heat < S.heatMax * 0.5) this.overheat = false;
+    if (this.storm > 0.3) this.shield = 0;                                   // ion storms knock shields out
+    else if (this.time - this.lastHit > S.shieldDelay) this.shield = Math.min(S.shieldMax, this.shield + S.shieldRegen * DT);
+    this.firedT -= DT;
+    let sig = S.signature * (this.thrusting ? 1 : 0.7) * (this.boosting ? 1.6 : 1) * (this.firedT > 0 ? 1.3 : 1);
+    if (S.darkSig < 1 && !this.thrusting && this.firedT <= 0) sig = S.signature * S.darkSig;        // Shade running dark
+    this.sigNow = sig * this.sigMod;
+    if (S.darkSig < 1 && (this.tick & 3) === 0 && this.svx * this.svx + this.svy * this.svy > 400)   // ghost trail
+      this.spawnParticle(this.sx - Math.cos(this.sa) * 4, this.sy - Math.sin(this.sa) * 4, this.svx * 0.2, this.svy * 0.2, 0.9, PK.Smoke, Col.Magenta, 1);
+    if (S.wingmen > 0) this.updateWingLaunch(S);
+  }
+  /** Verticality experiment (M4): altitude bands on. */
+  vert = false;
+  /** Environmental multiplier on signature (planet shadow / low band set by M4-M5 systems). */
+  sigMod = 1;
+
+  /** Hive: launch a wingman from a bay while hostiles are near, one per cooldown, up to ShipDef.wingmen. */
+  private updateWingLaunch(S: ShipDef): void {
+    this.wingCd -= DT;
+    if (this.wingCd > 0 || this.nWing >= S.wingmen || this.nEnemy === 0) return;
+    const e = this.spawnEnt(Kind.Wing, this.sx - Math.cos(this.sa) * 6, this.sy - Math.sin(this.sa) * 6, this.svx - Math.cos(this.sa) * 30, this.svy - Math.sin(this.sa) * 30);
+    if (e < 0) return;
+    this.et[e] = 25; this.eaux[e] = this.nWing; this.ehp[e] = 1e9; this.wingCd = 6; this.nWing++;
+    this.ring(this.ex[e], this.ey[e], 6, Col.Green);
+  }
+
+  /** Friendly drone: orbits the player, dives at the nearest hostile and shoots it. Lives 25 s. */
+  private updateWing(i: number): void {
+    this.et[i] -= DT; this.et2[i] -= DT;
+    if (this.et[i] <= 0 || !this.alive) { this.ek[i] = Kind.None; this.sparks(this.ex[i], this.ey[i], 6, Col.Green, 30); return; }
+    const x = this.ex[i], y = this.ey[i];
+    const tg = this.findAimTarget(x, y, this.ea[i], Math.PI, 200);
+    let tx: number, ty: number;
+    if (tg >= 0) { const a = this.time * 2 + this.eaux[i] * 2.1; tx = this.ex[tg] + Math.cos(a) * 26; ty = this.ey[tg] + Math.sin(a) * 26; }
+    else { const a = this.time * 1.4 + this.eaux[i] * 2.1; tx = this.sx + Math.cos(a) * 16; ty = this.sy + Math.sin(a) * 16; }
+    this.fx = 0; this.fy = 0;
+    this.arrive(i, tx, ty, KIND_SPEED[Kind.Wing], 20, 2);
+    const fm = Math.hypot(this.fx, this.fy), acc = KIND_ACCEL[Kind.Wing];
+    if (fm > acc) { this.fx *= acc / fm; this.fy *= acc / fm; }
+    this.evx[i] += this.fx * DT; this.evy[i] += this.fy * DT;
+    this.ex[i] += this.evx[i] * DT; this.ey[i] += this.evy[i] * DT;
+    const fa = tg >= 0 ? Math.atan2(this.ey[tg] - y, this.ex[tg] - x) : Math.atan2(this.evy[i], this.evx[i]);
+    this.ea[i] += wrapAngle(fa - this.ea[i]) * Math.min(1, 8 * DT);
+    if (tg >= 0 && this.et2[i] <= 0 && Math.abs(wrapAngle(fa - this.ea[i])) < 0.3) {
+      this.et2[i] = 0.45;
+      const c = Math.cos(this.ea[i]), sn = Math.sin(this.ea[i]);
+      this.spawnBullet(x + c * 2, y + sn * 2, this.evx[i] * 0.5 + c * 200, this.evy[i] * 0.5 + sn * 200, 0.9, 0, 0.6 * this.ship.damageMult);
+    }
+  }
+
   private dash(ca: number, sa: number, cd: number): void {
     const S = this.ship;
     this.dashCd = cd; this.invuln = Math.max(this.invuln, S.dashIFrames); this.ring(this.sx, this.sy, 16, Col.Cyan);
@@ -387,9 +457,15 @@ export class Sim {
     this.sparks(this.sx - ca * 6, this.sy - sa * 6, 10, Col.Cyan, 50);
   }
 
-  damageShip(d: number, nx: number, ny: number): void {
+  /** Incoming damage: resist by type, flat armour (never below 25%), shields first, Mule cargo soak, then hull. */
+  damageShip(d: number, nx: number, ny: number, type: number = Dmg.Kinetic): void {
     if (this.invuln > 0 || !this.alive) return;
     if (this.hard) d *= 1.3;
+    const S = this.ship;
+    d *= 1 - (type === Dmg.Kinetic ? S.resist.kinetic : type === Dmg.Thermal ? S.resist.thermal : S.resist.em);
+    d = Math.max(d * 0.25, d - S.armor);
+    if (this.shield > 0) { const a = Math.min(this.shield, d); this.shield -= a; d -= a; if (a > 0) this.sparks(this.sx - nx * 2, this.sy - ny * 2, 3, Col.Cyan, 30); }
+    if (S.cargoSoak > 0 && this.cargoUsed > 0 && d > 0) { const soak = Math.min(d * S.cargoSoak, this.cargoUsed * 3); d -= soak; this.cargoLost += soak / 3; this.cargoUsed = Math.max(0, this.cargoUsed - soak / 3); }
     this.hp -= d; this.lastHit = this.time; this.hitFlash = 1;
     this.hitAng = Math.atan2(-ny, -nx); this.hitT = 1;
     this.emit(Ev.ShipHit, this.sx, this.sy, d);
@@ -401,6 +477,10 @@ export class Sim {
       this.flash = 1;
     }
   }
+
+  /** Damage with no direction (heat, radiation): no knockback. */
+  hurt(d: number, type: number): void { const vx = this.svx, vy = this.svy, sh = this.shake; this.damageShip(d, 0, 0, type); this.svx = vx; this.svy = vy; this.shake = Math.min(this.shake, sh + 0.3); }
+  cargoLost = 0;
 
   // ===================================================================== spawning / streaming
   private streamSectors(): void {
@@ -557,11 +637,11 @@ export class Sim {
     for (let n = 0; n < 2; n++) this.spawnParticle(x - ca * 3 + (this.rng.next() - 0.5) * 3, y - sa * 3 + (this.rng.next() - 0.5) * 2, -ca * (10 + this.rng.next() * 20), -sa * (10 + this.rng.next() * 20), 0.5 + this.rng.next() * 0.9, PK.Exhaust, n ? Col.Cyan : Col.White, 1);
     if (this.alive && this.et[i] <= 0) {
       const dx = this.sx - x, dy = this.sy - y, rr = this.er[i] + this.ship.radius + 1;
-      if (dx * dx + dy * dy < rr * rr) { const d = Math.sqrt(dx * dx + dy * dy) + 1e-4; this.damageShip(25, dx / d, dy / d); this.et[i] = 3; }
+      if (dx * dx + dy * dy < rr * rr) { const d = Math.sqrt(dx * dx + dy * dy) + 1e-4; this.damageShip(25, dx / d, dy / d, Dmg.Kinetic); this.et[i] = 3; }
     }
     for (let e = 0; e < MAX_E; e++) {                       // anything caught in the comet is wiped out, except bosses, stations and escorts
       const k = this.ek[e];
-      if (k === Kind.None || k === Kind.Boss || k === Kind.Station || k === Kind.Freighter || k === Kind.Comet || k === Kind.Hauler) continue;
+      if (k === Kind.None || k === Kind.Boss || k === Kind.Station || k === Kind.Freighter || k === Kind.Comet || k === Kind.Hauler || k === Kind.Wing) continue;
       const dx = this.ex[e] - x, dy = this.ey[e] - y, rr = this.er[e] + this.er[i];
       if (dx * dx + dy * dy < rr * rr) this.killEnt(e, false);
     }
@@ -674,7 +754,7 @@ export class Sim {
   // ===================================================================== missiles
   /** Missiles only seek real combatants: never mines, rocks, stations, the escort freighter, comets or neutral haulers. */
   private isMissileTarget(k: number): boolean {
-    return k !== Kind.None && k !== Kind.Mine && k !== Kind.Asteroid && k !== Kind.Station && k !== Kind.Freighter && k !== Kind.Comet && k !== Kind.Hauler;
+    return k !== Kind.None && k !== Kind.Mine && k !== Kind.Asteroid && k !== Kind.Station && k !== Kind.Freighter && k !== Kind.Comet && k !== Kind.Hauler && k !== Kind.Wing;
   }
 
   private launchMissile(ca: number, sa: number): void {
@@ -788,13 +868,13 @@ export class Sim {
   }
 
   /** Free repair + refill while docked. */
-  serviceShip(): void { this.hp = this.hpMax; this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.boostE = this.boostMax; this.emit(Ev.Dock, this.sx, this.sy, 1); }
+  serviceShip(): void { this.hp = this.hpMax; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.boostE = this.boostMax; this.emit(Ev.Dock, this.sx, this.sy, 1); }
 
   // ===================================================================== spatial hash + entities
   private rebuildHash(): void {
     const h = this.hash;
     h.clear();
-    let ne = 0, nen = 0, na = 0, nb = 0; this.nHaulTmp = 0;
+    let ne = 0, nen = 0, na = 0, nb = 0, nw = 0; this.nHaulTmp = 0;
     for (let i = 0; i < MAX_E; i++) {
       if (this.ek[i] === Kind.None) continue;
       h.insert(i, this.ex[i], this.ey[i]);
@@ -802,12 +882,16 @@ export class Sim {
       const k = this.ek[i];
       if (k === Kind.Boss) { nb++; this.bossMax = this.bossHpMax; this.bossHp = this.ehp[i]; }
       if (k === Kind.Hauler) this.nHaulTmp++;
-      if (k === Kind.Asteroid) na++; else if (k !== Kind.Mine && k !== Kind.Station && k !== Kind.Freighter && k !== Kind.Comet && k !== Kind.Hauler) nen++;
+      if (k === Kind.Wing) nw++;
+      if (k === Kind.Asteroid) na++; else if (k !== Kind.Mine && k !== Kind.Station && k !== Kind.Freighter && k !== Kind.Comet && k !== Kind.Hauler && k !== Kind.Wing) nen++;
     }
-    this.nHaul = this.nHaulTmp; this.nEnt = ne; this.nEnemy = nen; this.nAst = na; this.nBoss = nb;
+    this.nHaul = this.nHaulTmp; this.nWing = nw; this.nEnt = ne; this.nEnemy = nen; this.nAst = na; this.nBoss = nb;
   }
 
+  /** Aggro-range multiplier from the player's live signature (sqrt so it never swings wildly). */
+  private sigF = 1;
   private updateEnts(): void {
+    this.sigF = clamp(Math.sqrt(this.sigNow), 0.2, 1.6);
     const cullR2 = 700 * 700, cullS2 = 1100 * 1100;
     for (let i = 0; i < MAX_E; i++) {
       const k = this.ek[i];
@@ -818,6 +902,7 @@ export class Sim {
       if (k === Kind.Station) continue;
       if (k === Kind.Freighter) { this.updateFreighter(i); continue; }
       if (k === Kind.Comet) { this.updateComet(i); continue; }
+      if (k === Kind.Wing) { this.updateWing(i); continue; }
       if (k === Kind.Hauler) { this.ex[i] += this.evx[i] * DT; this.ey[i] += this.evy[i] * DT; this.ea[i] = Math.atan2(this.evy[i], this.evx[i]); if ((this.tick & 7) === 0) this.spawnParticle(this.ex[i] - Math.cos(this.ea[i]) * 5, this.ey[i] - Math.sin(this.ea[i]) * 5, 0, 0, 0.8, PK.Exhaust, Col.Amber, 1); continue; }
       if (k === Kind.Asteroid) {
         this.ex[i] += this.evx[i] * DT; this.ey[i] += this.evy[i] * DT;
@@ -867,11 +952,11 @@ export class Sim {
 
     // ---- FSM transitions
     if (!this.alive) st = St.Patrol;
-    else if (kind === Kind.Minelayer || kind === Kind.Tender) st = d < KIND_AGGRO[kind] ? St.Flee : St.Patrol;
+    else if (kind === Kind.Minelayer || kind === Kind.Tender) st = d < KIND_AGGRO[kind] * this.sigF ? St.Flee : St.Patrol;
     else {
       switch (st) {
-        case St.Patrol: if (d < KIND_AGGRO[kind]) { st = St.Chase; this.et[i] = 0.5; } break;
-        case St.Chase: if (d > KIND_AGGRO[kind] * 1.7) st = St.Patrol; else if (d < ATK_IN[kind]) st = St.Attack; break;
+        case St.Patrol: if (d < KIND_AGGRO[kind] * this.sigF) { st = St.Chase; this.et[i] = 0.5; } break;
+        case St.Chase: if (d > KIND_AGGRO[kind] * 1.7 * this.sigF) st = St.Patrol; else if (d < ATK_IN[kind]) st = St.Attack; break;
         case St.Attack: if (hpFrac < 0.3 && kind === Kind.Gunship) { st = St.Flee; this.et[i] = 4; } else if (d > ATK_OUT[kind]) st = St.Chase; break;
         case St.Flee: if (this.et[i] <= 0) st = St.Chase; break;
       }
@@ -976,7 +1061,7 @@ export class Sim {
     if (kind === Kind.Tender && (this.tick % 8) === 0) {
       for (let j = 0; j < MAX_E; j++) {
         const kj = this.ek[j];
-        if (j === i || kj === Kind.None || kj === Kind.Mine || kj === Kind.Asteroid || kj === Kind.Station) continue;
+        if (j === i || kj === Kind.None || kj === Kind.Mine || kj === Kind.Asteroid || kj === Kind.Station || kj === Kind.Wing) continue;
         const dx = this.ex[j] - x, dy = this.ey[j] - y;
         if (dx * dx + dy * dy < 50 * 50 && this.ehp[j] < KIND_HP[kj]) {
           this.ehp[j] = Math.min(KIND_HP[kj], this.ehp[j] + 1.2);
@@ -1001,12 +1086,12 @@ export class Sim {
           const fan = 2 + Math.min(2, this.bossKills);
           for (let j = -fan; j <= fan; j++) {
             const fa = dir + j * 0.15;
-            this.spawnBullet(x + Math.cos(fa) * 12, y + Math.sin(fa) * 12, this.evx[i] * 0.3 + Math.cos(fa) * 100, this.evy[i] * 0.3 + Math.sin(fa) * 100, 2.8, 1, 6);
+            this.spawnBullet(x + Math.cos(fa) * 12, y + Math.sin(fa) * 12, this.evx[i] * 0.3 + Math.cos(fa) * 100, this.evy[i] * 0.3 + Math.sin(fa) * 100, 2.8, 1, 6, Dmg.Thermal);
           }
         }
       } else if (kind === Kind.Sniper) {
         if (this.echarge[i] === 0 && this.et[i] <= 0 && diff < 0.12) { this.echarge[i] = 1.0; this.emit(Ev.Charge, x, y, 1); }
-        else if (this.echarge[i] < 0) { this.enemyShot(i, 200, 0.0, 16); this.echarge[i] = 0; this.et[i] = 2.4 + this.rng.next(); }
+        else if (this.echarge[i] < 0) { this.enemyShot(i, 200, 0.0, 16, Dmg.Em); this.echarge[i] = 0; this.et[i] = 2.4 + this.rng.next(); }
       } else if (this.et[i] <= 0 && diff < 0.18) {
         // telegraphed burst: 0.5 s charge (barrels glow), then 3 shots
         if (this.echarge[i] === 0) { this.echarge[i] = 0.5; this.emit(Ev.Charge, x, y, 1); }
@@ -1026,7 +1111,7 @@ export class Sim {
     }
   }
 
-  private enemyShot(i: number, speed: number, spread: number, dmg: number): void {
+  private enemyShot(i: number, speed: number, spread: number, dmg: number, type: number = Dmg.Kinetic): void {
     const dx = this.sx - this.ex[i], dy = this.sy - this.ey[i];
     const t = Math.sqrt(dx * dx + dy * dy) / speed;
     const tx = this.sx + this.svx * t - this.ex[i], ty = this.sy + this.svy * t - this.ey[i];
@@ -1035,7 +1120,7 @@ export class Sim {
     const gun = this.ek[i] === Kind.Gunship, reach = gun ? 9.5 : this.er[i] * 3.6, lat = gun ? ((this.eaux[i] & 1) ? 3.5 : -3.5) : 0;
     this.emit(Ev.EnemyShot, this.ex[i], this.ey[i], 1);
     this.spawnBullet(this.ex[i] + ca * reach - sa * lat, this.ey[i] + sa * reach + ca * lat,
-      this.evx[i] * 0.3 + ca * speed, this.evy[i] * 0.3 + sa * speed, 2.6, 1, dmg);
+      this.evx[i] * 0.3 + ca * speed, this.evy[i] * 0.3 + sa * speed, 2.6, 1, dmg, type);
   }
 
   private seek(i: number, tx: number, ty: number, speed: number, w: number): void {
@@ -1134,7 +1219,7 @@ export class Sim {
     this.depth++;
     for (let e = 0; e < MAX_E; e++) {
       const k = this.ek[e];
-      if (k === Kind.None || k === Kind.Station || (k === Kind.Freighter && byPlayer) || k === Kind.Comet) continue;
+      if (k === Kind.None || k === Kind.Station || (k === Kind.Freighter && byPlayer) || k === Kind.Comet || k === Kind.Wing) continue;
       const dx = this.ex[e] - x, dy = this.ey[e] - y, rr = radius + this.er[e];
       const d2 = dx * dx + dy * dy;
       if (d2 > rr * rr) continue;
@@ -1147,7 +1232,7 @@ export class Sim {
       const dx = this.sx - x, dy = this.sy - y, d2 = dx * dx + dy * dy, rr = radius + this.ship.radius;
       if (d2 < rr * rr) {
         const d = Math.sqrt(d2) + 1e-4;
-        this.damageShip(dmg * (1 - d / rr), dx / d, dy / d);
+        this.damageShip(dmg * (1 - d / rr), dx / d, dy / d, Dmg.Thermal);
       }
     }
     this.depth--;
@@ -1159,7 +1244,7 @@ export class Sim {
     for (let gy = cy - 1; gy <= cy + 1; gy++) for (let gx = cx - 1; gx <= cx + 1; gx++) {
       for (let j = h.head[SpatialHash.key(gx, gy)]; j >= 0; j = h.next[j]) {
         const k = this.ek[j];
-        if (k === Kind.None || k === Kind.Mine || k === Kind.Comet) continue;
+        if (k === Kind.None || k === Kind.Mine || k === Kind.Comet || k === Kind.Wing) continue;
         const dx = this.sx - this.ex[j], dy = this.sy - this.ey[j];
         const rr = this.er[j] + this.ship.radius, d2 = dx * dx + dy * dy;
         if (d2 >= rr * rr) continue;
@@ -1174,7 +1259,7 @@ export class Sim {
           this.evx[j] -= nx * imp * 0.5 * mk; this.evy[j] -= ny * imp * 0.5 * mk;
           if (imp > 6) {
             this.damageShip(Math.min(30, imp * 0.35), nx, ny);
-            this.hitEnt(j, (k === Kind.Asteroid ? 1 : 3) * mk, -nx * imp, -ny * imp);
+            this.hitEnt(j, (k === Kind.Asteroid ? 1 : 3) * mk * this.ship.ramMult, -nx * imp, -ny * imp);
           }
         }
       }
@@ -1182,10 +1267,10 @@ export class Sim {
   }
 
   // ===================================================================== bullets
-  spawnBullet(x: number, y: number, vx: number, vy: number, life: number, owner: number, dmg: number): void {
+  spawnBullet(x: number, y: number, vx: number, vy: number, life: number, owner: number, dmg: number, type: number = Dmg.Kinetic): void {
     const i = this.bcur; this.bcur = (this.bcur + 1) % MAX_B;
     this.bx[i] = x; this.by[i] = y; this.bvx[i] = vx; this.bvy[i] = vy;
-    this.blife[i] = life; this.bown[i] = owner; this.bdmg[i] = dmg;
+    this.blife[i] = life; this.bown[i] = owner; this.bdmg[i] = dmg; this.btype[i] = type;
   }
 
   private updateBullets(): void {
@@ -1218,7 +1303,7 @@ export class Sim {
         const cx = Math.floor(nx * inv), cy = Math.floor(ny * inv);
         for (let gy = cy - 1; gy <= cy + 1 && !dead; gy++) for (let gx = cx - 1; gx <= cx + 1 && !dead; gx++) {
           for (let j = h.head[SpatialHash.key(gx, gy)]; j >= 0; j = h.next[j]) {
-            if (this.ek[j] === Kind.None || this.ek[j] === Kind.Freighter) continue;
+            if (this.ek[j] === Kind.None || this.ek[j] === Kind.Freighter || this.ek[j] === Kind.Wing) continue;
             let t = ((this.ex[j] - ox) * sdx + (this.ey[j] - oy) * sdy) / sl;
             t = t < 0 ? 0 : t > 1 ? 1 : t;
             const qx = ox + sdx * t - this.ex[j], qy = oy + sdy * t - this.ey[j];
@@ -1236,7 +1321,7 @@ export class Sim {
         if (dx * dx + dy * dy < rr * rr) {
           dead = true;
           const l = Math.sqrt(this.bvx[i] * this.bvx[i] + this.bvy[i] * this.bvy[i]) + 1e-4;
-          this.damageShip(this.bdmg[i], this.bvx[i] / l, this.bvy[i] / l);
+          this.damageShip(this.bdmg[i], this.bvx[i] / l, this.bvy[i] / l, this.btype[i]);
           this.sparks(nx, ny, 5, Col.Cyan, 36);
         }
       }

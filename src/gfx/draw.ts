@@ -1,6 +1,6 @@
 import { TAU, hash2 } from '../core/util';
 import { settings } from '../core/config';
-import { DT, In, Kind, MAX_B, MAX_E, MAX_P, MAX_M, MAX_R, MAX_S, PK, Sim } from '../sim/sim';
+import { DT, Kind, MAX_B, MAX_E, MAX_P, MAX_M, MAX_R, MAX_S, PK, Sim } from '../sim/sim';
 import { PLANET_STRIDE, gravReach, sectorOf } from '../sim/world';
 import { gi } from './atlas';
 import { Spr } from './batch';
@@ -183,16 +183,24 @@ export class FrameBuilder {
       const a = s.spa + da * al;
       const target = s.thrusting ? (s.boosting ? 1.35 : 0.9) : 0.12;
       this.thrS += (target - this.thrS) * 0.22;
-      sp.add(x, y, a, 20, Spr.Player, 0.5, s.hitFlash * 0.8, this.thrS, 0.72, this.shade(x, y));
-      gl.add(x, y, 9, 0.16, 0.18, 0.24);
+      const S = s.ship, rk = S.radius / 2.4;
+      sp.add(x, y, a, S.artSize, S.art, this.hullState(), s.hitFlash * 0.8, this.thrS, 0.72, this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
+      if (S.darkSig >= 1 || this.dark < 0.5) gl.add(x, y, 9, 0.16, 0.18, 0.24);
       if (s.thrusting) {
         const ca = Math.cos(a), sa = Math.sin(a);
-        const rad = s.boosting ? 8 : 5.5;
-        gl.add(x - ca * 7 - sa * 2, y - sa * 7 + ca * 2, rad, s.boosting ? 0.2 : 0.55, s.boosting ? 0.8 : 0.28, s.boosting ? 1.3 : 0.06);
-        gl.add(x - ca * 7 + sa * 2, y - sa * 7 - ca * 2, rad, s.boosting ? 0.2 : 0.55, s.boosting ? 0.8 : 0.28, s.boosting ? 1.3 : 0.06);
+        const rad = (s.boosting ? 8 : 5.5) * (S.darkSig < 1 ? 0.6 : 1);
+        gl.add(x - ca * 7 * rk - sa * 2 * rk, y - sa * 7 * rk + ca * 2 * rk, rad, s.boosting ? 0.2 : 0.55, s.boosting ? 0.8 : 0.28, s.boosting ? 1.3 : 0.06);
+        gl.add(x - ca * 7 * rk + sa * 2 * rk, y - sa * 7 * rk - ca * 2 * rk, rad, s.boosting ? 0.2 : 0.55, s.boosting ? 0.8 : 0.28, s.boosting ? 1.3 : 0.06);
       }
-      if (s.input & In.Fire) gl.add(x + Math.cos(a) * 9.5, y + Math.sin(a) * 9.5, 5, 0.6, 0.12, 0.08);
+      if (s.muzzleT > 0) gl.add(x + Math.cos(a) * 9.5 * rk, y + Math.sin(a) * 9.5 * rk, 5, 0.6, 0.12, 0.08);
     } else this.thrS = 0.12;
+    for (let i = 0; i < MAX_E; i++) {
+      if (s.ek[i] !== Kind.Wing) continue;
+      const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back;
+      if (!this.visible(x, y, 6)) continue;
+      sp.add(x, y, s.ea[i], 5, Spr.Wing, 0, 0, 0.6, 0.9);
+      gl.add(x, y, 3, 0.05, 0.4, 0.25);
+    }
     for (let m = 0; m < MAX_M; m++) {
       if (s.mlife[m] <= 0) continue;
       const x = s.mx[m], y = s.my[m];
@@ -209,6 +217,26 @@ export class FrameBuilder {
       const cb = settings.cb ? 1 : 0;
       if (s.bown[i] === 0) { sp.add(x, y, a, 4, Spr.Bolt, 0, 0, cb, 0.8); if (cb) gl.add(x, y, 4.5, 0.05, 0.2, 0.6); else gl.add(x, y, 4.5, 0.55, 0.07, 0.05); }
       else { sp.add(x, y, a, 3.5, Spr.EBolt, 0, 0, cb, 0.8); if (cb) gl.add(x, y, 4.5, 0.6, 0.3, 0.04); else gl.add(x, y, 4.5, 0.08, 0.5, 0.12); }
+    }
+  }
+
+  private dark = 0; private arm = 0; private bay = 0;
+  /** Ship-specific live state for the hull shader (one float): barrel flash, petal unfold, hold fill, dark fade, arm reach, bays. */
+  private hullState(): number {
+    const s = this.sim, S = s.ship;
+    this.dark += ((S.darkSig < 1 && s.sigNow < S.signature * 0.3 ? 1 : 0) - this.dark) * 0.08;
+    switch (S.art) {
+      case Spr.Anvil: return s.muzzleT > 0 && S.muzzle ? (S.muzzle[s.hpIdx] + 5) / 10 : 0;
+      case Spr.Sextant: return s.scanP;
+      case Spr.Mule: return Math.min(1, s.cargoUsed / Math.max(1, S.cargo));
+      case Spr.Shade: return this.dark;
+      case Spr.Magpie: {
+        let want = 0; const r2 = s.tractorR * s.tractorR;
+        for (let i = 0; i < MAX_S; i++) if (s.scl[i] > 0) { const dx = s.scx[i] - s.sx, dy = s.scy[i] - s.sy; if (dx * dx + dy * dy < r2) { want = 1; break; } }
+        this.arm += (want - this.arm) * 0.1; return this.arm;
+      }
+      case Spr.Hive: { const want = s.wingCd > 5 || (s.nEnemy > 0 && s.nWing < S.wingmen && s.wingCd < 1.2) ? 1 : 0; this.bay += (want - this.bay) * 0.12; return this.bay; }
+      default: return 0.5;
     }
   }
 

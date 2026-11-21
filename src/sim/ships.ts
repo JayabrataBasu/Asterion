@@ -34,11 +34,16 @@ export interface ShipDef {
 
   // Vertical flight (M4)
   climbRate: number; altitudeBands: number;
+
+  // Quirks (numeric so they tune like everything else)
+  ramMult: number; cargoSoak: number; darkSig: number; wingmen: number; nebulaScan: number;
+  /** Sprite half-extent in world units (art only). */
+  artSize: number;
 }
 
 /** Flight constants that are not per-ship (shared by every hull). */
 export const FLIGHT = { DRAG: 0.09, GRIP_COAST_K: 0.3125, GRIP_FWD: 0.5, TURN_DECAY_K: 12 / 9, AIM_TURN_K: 3.7 / 2.6, BOOST_TOP_K: 190 / 118, SPEED_CAP_K: 2.5,
-  FIRE_COOL: 0.105, BOLT_SPEED: 215, SIDE_SPEED: 205, MUZZLE: 9.5, KICK: 0.35 };
+  FIRE_COOL: 0.105, BOLT_SPEED: 215, SIDE_SPEED: 205, MUZZLE: 9.5, KICK: 0.35, SHOT_HEAT: 0.5, BOOST_HEAT: 5 };
 
 /** The original ship. Values reproduce the pre-ShipDef constants exactly (proved by test/wren.test.ts). */
 export const WREN: ShipDef = {
@@ -48,7 +53,7 @@ export const WREN: ShipDef = {
   boostMult: 1.9, boostCap: 100, boostDrain: 30, boostRegen: 9,
   dashImpulse: 70, dashCooldown: 1.3, dashIFrames: 0.3, dashCharges: 1,
   gravSusceptibility: 1,
-  energyMax: 100, energyRegen: 14, heatMax: 100, heatDissipation: 12,
+  energyMax: 100, energyRegen: 16, heatMax: 100, heatDissipation: 12,
   hullMax: 100, hullRegen: 3.5, hullRegenDelay: 5, armor: 0,
   shieldMax: 20, shieldRegen: 8, shieldDelay: 3,
   resist: { kinetic: 0, thermal: 0, em: 0 }, radius: 2.4, signature: 1,
@@ -56,6 +61,7 @@ export const WREN: ShipDef = {
   fuelMax: 100, fuelBurn: 0.25, jumpRange: 14, jumpCharge: 4, sensorRange: 600, scanRate: 1,
   cargo: 20, tractor: 28,
   climbRate: 2.5, altitudeBands: 3,
+  ramMult: 1, cargoSoak: 0, darkSig: 1, wingmen: 0, nebulaScan: 0, artSize: 20,
 };
 
 /** Relative-to-Wren starting points (Wren = 100) from the design brief, turned into absolute defs. */
@@ -77,35 +83,35 @@ function make(base: Partial<ShipDef> & { id: string; name: string; role: string;
   return d;
 }
 
-export const NEEDLE = make({ id: 'needle', name: 'NEEDLE', role: 'INTERCEPTOR', quirk: 'Dash has two charges', art: 14, assist: 0.55, dashCharges: 2, dashCooldown: 1.6,
+export const NEEDLE = make({ id: 'needle', name: 'NEEDLE', role: 'INTERCEPTOR', quirk: 'Dash has two charges', art: 14, artSize: 30, assist: 0.55, dashCharges: 2, dashCooldown: 1.6,
   radius: 1.8, fireRateMult: 1.1, damageMult: 0.8, boltSpeedMult: 1.15, climbRate: 4, heatDissipation: 11, scanRate: 0.9, jumpRange: 12, tractor: 24 },
 { mass: 60, accel: 130, top: 125, turn: 140, grip: 110, boost: 130, hull: 55, shield: 70, sig: 110, sens: 90, fuel: 90, cargo: 40 });
 
-export const ANVIL = make({ id: 'anvil', name: 'ANVIL', role: 'GUNSHIP', quirk: 'Ramming deals heavy damage', art: 15, assist: 0.6, armor: 1.5,
+export const ANVIL = make({ id: 'anvil', name: 'ANVIL', role: 'GUNSHIP', quirk: 'Ramming deals heavy damage', art: 15, artSize: 20, assist: 0.6, armor: 1.5, ramMult: 3,
   hardpoints: ['fixed', 'fixed', 'fixed', 'fixed'], muzzle: [-3.4, 1.1, -1.1, 3.4], fireRateMult: 0.62, damageMult: 1.15, boltSpeedMult: 0.95, spread: 0.05,
   resist: { kinetic: 0.25, thermal: 0.1, em: 0 }, radius: 3.2, climbRate: 1.8, heatMax: 140, heatDissipation: 14, scanRate: 0.7, jumpRange: 10, dashImpulse: 55 },
 { mass: 170, accel: 70, top: 80, turn: 65, grip: 120, boost: 70, hull: 190, shield: 130, sig: 130, sens: 90, fuel: 80, cargo: 80 });
 
-export const SEXTANT = make({ id: 'sextant', name: 'SEXTANT', role: 'SURVEYOR', quirk: 'Scans ignore nebula interference', art: 16, assist: 0.7,
+export const SEXTANT = make({ id: 'sextant', name: 'SEXTANT', role: 'SURVEYOR', quirk: 'Scans ignore nebula interference', art: 16, artSize: 22, assist: 0.7, nebulaScan: 1,
   hardpoints: ['fixed'], fireRateMult: 1.3, damageMult: 0.95, scanRate: 2.2, jumpRange: 22, jumpCharge: 3, fuelBurn: 0.2, resist: { kinetic: 0, thermal: 0.1, em: 0.3 },
   radius: 2.3, climbRate: 2.5, tractor: 30 },
 { mass: 90, accel: 85, top: 95, turn: 90, grip: 100, boost: 80, hull: 80, shield: 90, sig: 70, sens: 220, fuel: 200, cargo: 90 });
 
-export const MULE = make({ id: 'mule', name: 'MULE', role: 'HAULER', quirk: 'Cargo soaks damage', art: 17, assist: 0.6, armor: 1,
+export const MULE = make({ id: 'mule', name: 'MULE', role: 'HAULER', quirk: 'Cargo soaks damage', art: 17, artSize: 22, assist: 0.6, armor: 1, cargoSoak: 0.35,
   hardpoints: ['turret', 'turret'], fireRateMult: 0.8, damageMult: 0.9, resist: { kinetic: 0.1, thermal: 0.1, em: 0.1 },
   radius: 3.4, climbRate: 1.2, jumpRange: 12, tractor: 40, dashImpulse: 45, scanRate: 0.8 },
 { mass: 220, accel: 55, top: 70, turn: 50, grip: 130, boost: 50, hull: 150, shield: 100, sig: 140, sens: 80, fuel: 130, cargo: 400 });
 
-export const SHADE = make({ id: 'shade', name: 'SHADE', role: 'STEALTH', quirk: 'Engines off means near-zero signature', art: 18, assist: 0.5,
+export const SHADE = make({ id: 'shade', name: 'SHADE', role: 'STEALTH', quirk: 'Engines off means near-zero signature', art: 18, artSize: 18, assist: 0.5, darkSig: 0.08,
   fireRateMult: 1.05, damageMult: 1.1, radius: 2.0, climbRate: 3.5, resist: { kinetic: 0, thermal: 0, em: 0.2 }, scanRate: 1.1, jumpRange: 15 },
 { mass: 70, accel: 110, top: 105, turn: 120, grip: 80, boost: 120, hull: 60, shield: 50, sig: 40, sens: 120, fuel: 100, cargo: 60 });
 
-export const MAGPIE = make({ id: 'magpie', name: 'MAGPIE', role: 'SALVAGER', quirk: 'Wide tractor, slow self-repair', art: 19, assist: 0.75,
+export const MAGPIE = make({ id: 'magpie', name: 'MAGPIE', role: 'SALVAGER', quirk: 'Wide tractor, slow self-repair', art: 19, artSize: 22, assist: 0.75,
   hardpoints: ['fixed'], fireRateMult: 1.4, damageMult: 1.0, tractor: 70, hullRegen: 1.5, hullRegenDelay: 0, radius: 2.6, climbRate: 2.2, scanRate: 1.2, jumpRange: 14,
   resist: { kinetic: 0.1, thermal: 0, em: 0 } },
 { mass: 110, accel: 95, top: 90, turn: 100, grip: 105, boost: 90, hull: 100, shield: 90, sig: 100, sens: 110, fuel: 110, cargo: 150 });
 
-export const HIVE = make({ id: 'hive', name: 'HIVE', role: 'CARRIER', quirk: 'Launches small drone wingmen', art: 20, assist: 0.6, armor: 1,
+export const HIVE = make({ id: 'hive', name: 'HIVE', role: 'CARRIER', quirk: 'Launches small drone wingmen', art: 20, artSize: 20, assist: 0.6, armor: 1, wingmen: 3,
   hardpoints: ['turret'], fireRateMult: 1.2, damageMult: 1.0, resist: { kinetic: 0.15, thermal: 0.15, em: 0.15 },
   radius: 3.6, climbRate: 0, altitudeBands: 1, jumpRange: 16, scanRate: 1.0, tractor: 36, dashImpulse: 40 },
 { mass: 260, accel: 50, top: 65, turn: 45, grip: 140, boost: 45, hull: 220, shield: 160, sig: 150, sens: 130, fuel: 140, cargo: 200 });
@@ -119,6 +125,7 @@ export const ENEMY: EnemyDef[] = [
   E('mine', 5, 0, 0, 0, 1, 1.6, 0), E('asteroid', 50, 0, 0, 0, 0, 0, 0), E('station', 1000, 0, 0, 0, 1e9, 11.5, 0), E('boss', 600, 34, 24, 1.6, 110, 10, 420),
   E('sniper', 50, 44, 30, 3.0, 5, 3.0, 330), E('splitter', 25, 110, 56, 6, 3, 2.6, 220), E('tender', 60, 40, 28, 2.2, 8, 3.4, 250), E('rammer', 30, 200, 96, 9, 2, 1.8, 300),
   E('freighter', 400, 10, 14, 1, 40, 5.0, 0), E('comet', 200, 0, 90, 0, 1e9, 4.5, 0), E('hauler', 300, 0, 14, 0, 6, 4.2, 0),
+  E('wing', 10, 260, 150, 8, 1e9, 1.2, 0),
 ];
 
 export const ROSTER: ShipDef[] = [WREN, NEEDLE, ANVIL, SEXTANT, MULE, SHADE, MAGPIE, HIVE];
@@ -186,6 +193,11 @@ export const FIELDS: FieldMeta[] = [
   F('tractor', 5, 120, 1, 'utility', 'M1', 'pickup / salvage pull radius'),
   F('climbRate', 0, 8, 0.1, 'vertical', 'M4', 'band changes per second (0 = locked to one band)'),
   F('altitudeBands', 1, 3, 1, 'vertical', 'M4', 'altitude bands this hull can use'),
+  F('ramMult', 0.5, 5, 0.1, 'quirk', 'M2', 'ram damage multiplier (Anvil)'),
+  F('cargoSoak', 0, 0.8, 0.01, 'quirk', 'M2', 'share of hull damage absorbed by carried cargo, 3 damage per unit lost (Mule)'),
+  F('darkSig', 0.02, 1, 0.01, 'quirk', 'M2', 'signature while coasting and not firing; 1 = no effect (Shade)'),
+  F('wingmen', 0, 5, 1, 'quirk', 'M2', 'drone wingmen launched near hostiles (Hive)'),
+  F('nebulaScan', 0, 1, 1, 'quirk', 'M5', '1 = scans ignore nebula / ion interference (Sextant)'),
 ];
 export function getField(d: ShipDef, key: string): number {
   if (key.startsWith('resist.')) return d.resist[key.slice(7) as keyof Resist];
@@ -266,6 +278,7 @@ export function validate(d: ShipDef): Issue[] {
   const dv = derive(d);
   if (!Number.isFinite(dv.timeToTop) || dv.timeToTop > 30) out.push({ level: 'error', field: 'thrustFwd', msg: 'cannot reach 95% of top speed within 30 s (thrust too low for the drag)' });
   if (dv.turnCircle > 400) out.push({ level: 'warn', field: 'turnRate', msg: `turn circle ${dv.turnCircle | 0} u: cannot turn inside a sector` });
+  if (d.heatDissipation <= FLIGHT.BOOST_HEAT) out.push({ level: 'warn', field: 'heatDissipation', msg: 'boosting alone overheats this hull' });
   if (d.energyRegen < dpsOf(d) / d.damageMult * 0.25) out.push({ level: 'warn', field: 'energyRegen', msg: 'energy regen sustains under 25% of the fire rate' });
   const dev = dv.budget / BUDGET_REF - 1;
   if (Math.abs(dev) > BUDGET_TOL) out.push({ level: 'warn', field: 'budget', msg: `stat budget ${dv.budget | 0} is ${(dev * 100).toFixed(0)}% from Wren's ${BUDGET_REF | 0}` });

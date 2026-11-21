@@ -1,8 +1,9 @@
 import { PRESETS, settings } from './core/config';
-import { ACTIONS, DEFAULT_BINDS, loadSave, writeSave, type Action } from './core/save';
+import { ACTIONS, DEFAULT_BINDS, loadSave, upsOf, writeSave, type Action } from './core/save';
 import { PerfHud } from './dev/perfHud';
 import { mountTuner } from './dev/tune';
-import { shipById } from './sim/ships';
+import { RATING_KEYS, ROSTER, bar, derive, shipById } from './sim/ships';
+import { UNLOCKS, unlockOf } from './sim/unlocks';
 import { FrameBuilder } from './gfx/draw';
 import { panel, panelOrigin } from './gfx/menu';
 import { Renderer } from './gfx/renderer';
@@ -52,10 +53,21 @@ function applyHc(): void {
   else if (hcBase) { settings.nebula = hcBase.nebula; settings.bgK = hcBase.bgK; settings.sun = hcBase.sun; hcBase = null; }
 }
 function dailySeed(): number { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
-function bank(): void { for (let i = 0; i < UP_N; i++) save.up[i] = sim.up[i]; save.scrap = sim.scrap; writeSave(save); }
+/** Bank upgrades, scrap and lifetime stats (deltas since the last bank this run). */
+const banked = { kills: 0, bosses: 0, scrap: 0 };
+function bank(): void {
+  const u = upsOf(save, save.ship); for (let i = 0; i < UP_N; i++) u[i] = sim.up[i];
+  save.scrap = sim.scrap;
+  const st = save.stats;
+  st.kills += sim.kills - banked.kills; st.bosses += sim.bossKills - banked.bosses; st.scrap += sim.scrapTotal - banked.scrap;
+  banked.kills = sim.kills; banked.bosses = sim.bossKills; banked.scrap = sim.scrapTotal;
+  st.maxTier = Math.max(st.maxTier, sim.objTier);
+  writeSave(save);
+}
 function newRun(): void {
-  for (let i = 0; i < UP_N; i++) sim.up[i] = save.up[i];
-  sim.scrap = save.scrap;
+  applyShip();
+  banked.kills = banked.bosses = banked.scrap = 0;
+  sim.scrap = save.scrap; sim.vert = save.vert;
   sim.hard = save.hard;
   sim.reset(urlSeed !== null ? parseInt(urlSeed, 10) >>> 0 : save.daily ? dailySeed() : (Math.random() * 1e9) >>> 0);
   fb.hiScore = save.hi; deathHandled = false; lastHp = sim.hp;
@@ -64,7 +76,7 @@ let deathHandled = false;
 newRun();
 
 // ---------------------------------------------------------------- state machine
-type State = 'menu' | 'play' | 'pause' | 'shop' | 'controls' | 'map';
+type State = 'menu' | 'play' | 'pause' | 'shop' | 'controls' | 'map' | 'hangar' | 'logs' | 'chart';
 let state: State = 'menu';
 let sel = 0;
 let waitingBind = -1;           // index into ACTIONS while capturing a key
@@ -119,87 +131,112 @@ function governor(): void {
 }
 
 // ---------------------------------------------------------------- menus
-interface MenuDef { title: string; lines: string[]; footer: string }
+/** A menu is a list of items; each item owns its action (Enter) and optional left/right adjust. */
+interface Item { label: string; act?: () => void; adj?: (d: number) => void }
+interface MenuDef { title: string; items: Item[]; footer: string; tone?: number }
 const onOff = (b: boolean): string => (b ? 'ON ' : 'OFF');
+const opt = (label: string, value: string, act: () => void, adj?: (d: number) => void): Item => ({ label: (label + ' ..................').slice(0, 18) + ' ' + value, act: () => { act(); persist(); }, adj });
 function optionsMenu(): MenuDef {
-  return {
-    title: state === 'menu' ? 'A S T E R I O N' : 'P A U S E D',
-    lines: [
-      state === 'menu' ? 'LAUNCH' : 'RESUME',
-      'MOUSE AIM ........ ' + onOff(mouseAim),
-      'FLIGHT ASSIST .... ' + onOff(sim.assist),
-      'AIM ASSIST ....... ' + ['OFF   ', 'WIDE  ', 'LEAD  ', 'HOMING'][sim.aimAssist],
-      'VOLUME ........... ' + Math.round(audio.volume * 100) + '%',
-      'SOUND ............ ' + onOff(!audio.muted),
-      'COLOUR-BLIND ..... ' + onOff(settings.cb),
-      'REDUCED FX ....... ' + onOff(settings.reduceFx),
-      'HIGH CONTRAST .... ' + onOff(save.hc),
-      'DAILY SEED ....... ' + onOff(save.daily),
-      'HARD MODE ........ ' + onOff(save.hard),
-      'REBIND KEYS',
-    ],
-    footer: 'UP/DOWN  SELECT     ENTER  CHANGE     LEFT/RIGHT  VOLUME',
-  };
+  const title = state === 'menu';
+  const items: Item[] = [{ label: title ? 'LAUNCH  (' + shipById(save.ship).name + ')' : 'RESUME', act: () => { if (title) newRun(); state = 'play'; } }];
+  if (title) items.push({ label: 'HANGAR', act: () => { state = 'hangar'; sel = Math.max(0, ROSTER.findIndex(d => d.id === save.ship)); } });
+  items.push(
+    { label: 'SHIP LOGS', act: () => { back = state as 'menu' | 'pause'; state = 'logs'; sel = 0; } },
+    opt('MOUSE AIM', onOff(mouseAim), () => { mouseAim = !mouseAim; }),
+    opt('FLIGHT ASSIST', onOff(sim.assist), () => { sim.assist = !sim.assist; }),
+    opt('AIM ASSIST', ['OFF   ', 'WIDE  ', 'LEAD  ', 'HOMING'][sim.aimAssist], () => { sim.aimAssist = (sim.aimAssist + 1) % 4; }),
+    opt('VOLUME', Math.round(audio.volume * 100) + '%', () => audio.setVolume(audio.volume >= 1 ? 0.2 : Math.min(1, audio.volume + 0.2)),
+      d => { audio.setVolume(Math.min(1, Math.max(0, audio.volume + d * 0.1))); persist(); }),
+    opt('SOUND', onOff(!audio.muted), () => audio.setMuted(!audio.muted)),
+    opt('COLOUR-BLIND', onOff(settings.cb), () => { settings.cb = !settings.cb; }),
+    opt('REDUCED FX', onOff(settings.reduceFx), () => { settings.reduceFx = !settings.reduceFx; }),
+    opt('HIGH CONTRAST', onOff(save.hc), () => { save.hc = !save.hc; }),
+    opt('NEWS TICKER', onOff(save.ticker), () => { save.ticker = !save.ticker; }),
+    opt('VERTICAL (EXP.)', onOff(save.vert), () => { save.vert = !save.vert; sim.vert = save.vert; }),
+  );
+  if (title) items.push(opt('DAILY SEED', onOff(save.daily), () => { save.daily = !save.daily; }), opt('HARD MODE', onOff(save.hard), () => { save.hard = !save.hard; }));
+  items.push({ label: 'REBIND KEYS', act: () => { back = state as 'menu' | 'pause'; state = 'controls'; sel = 0; } });
+  return { title: title ? 'A S T E R I O N' : 'P A U S E D', items, footer: 'UP/DOWN  SELECT     ENTER  CHANGE     LEFT/RIGHT  ADJUST' };
 }
+let back: 'menu' | 'pause' = 'menu';
 /** Read-only cheat sheet of every control (uses the player's current bindings); shown beside the title and pause menus. */
 function controlsCard(): MenuDef {
   const k = (a: Action): string => keyLabel(bindOf(a));
-  const row = (n: string, v: string): string => (n + ' ..................').slice(0, 15) + ' ' + v;
-  return {
-    title: 'F L I G H T   C O N T R O L S',
-    lines: [
-      row('THRUST', k('thrust') + ' / UP'), row('TURN', k('left') + ' ' + k('right') + ' / ARROWS'), row('BRAKE', k('brake') + ' / DOWN'),
-      row('FIRE', k('fire') + (mouseAim ? ' / CLICK' : '')), row('BOOST', 'HOLD ' + k('boost')), row('DODGE', k('dodge') + '  (BRIEF INVULN.)'),
-      row('STRAFE', k('strafeL') + ' / ' + k('strafeR')), row('MISSILE', k('missile') + '  (NEEDS UPGRADE)'), row('DOCK / SHOP', k('dock') + '  AT STATION RING'),
-      row('MAP', 'N'), row('PAUSE', 'P / ESC'), row('MOUSE AIM', 'ON/OFF IN OPTIONS'),
-    ],
-    footer: 'REBIND ANY KEY UNDER  REBIND KEYS',
-  };
+  const row = (n: string, v: string): Item => ({ label: (n + ' ..................').slice(0, 15) + ' ' + v });
+  const items = [
+    row('THRUST', k('thrust') + ' / UP'), row('TURN', k('left') + ' ' + k('right') + ' / ARROWS'), row('BRAKE', k('brake') + ' / DOWN'),
+    row('FIRE', k('fire') + (mouseAim ? ' / CLICK' : '')), row('BOOST', 'HOLD ' + k('boost')), row('DODGE', k('dodge') + '  (BRIEF INVULN.)'),
+    row('STRAFE', k('strafeL') + ' / ' + k('strafeR')), row('MISSILE', k('missile') + '  (NEEDS MODULE)'), row('SCAN', 'HOLD ' + k('scan')),
+    row('CRUISE', k('cruise') + '  (NO HOSTILES NEAR)'), row('DOCK / SHOP', k('dock') + '  AT STATION RING'), row('CHART / JUMP', 'N'),
+  ];
+  if (save.vert) items.push(row('CLIMB / DIVE', k('climb') + ' / ' + k('dive')));
+  items.push(row('PAUSE', 'P / ESC'));
+  return { title: 'F L I G H T   C O N T R O L S', items, footer: 'REBIND ANY KEY UNDER  REBIND KEYS' };
 }
 function controlsMenu(): MenuDef {
-  const lines: string[] = [];
-  for (let i = 0; i < ACTIONS.length; i++) lines.push((ACTIONS[i].toUpperCase() + ' ..............').slice(0, 14) + ' ' + (waitingBind === i ? '[ PRESS A KEY ]' : keyLabel(bindOf(ACTIONS[i]))));
-  lines.push('RESET DEFAULTS', 'BACK');
-  return { title: 'C O N T R O L S', lines, footer: 'ENTER  REBIND     ESC  BACK     (ARROW KEYS ALWAYS WORK)' };
+  const items: Item[] = ACTIONS.map((a, i) => ({ label: (a.toUpperCase() + ' ..............').slice(0, 14) + ' ' + (waitingBind === i ? '[ PRESS A KEY ]' : keyLabel(bindOf(a))), act: () => { waitingBind = i; } }));
+  items.push({ label: 'RESET DEFAULTS', act: () => { for (const a of ACTIONS) save.binds[a] = DEFAULT_BINDS[a]; fb.dockKey = keyLabel(bindOf('dock')); writeSave(save); } });
+  items.push({ label: 'BACK', act: () => { state = back; sel = 0; } });
+  return { title: 'C O N T R O L S', items, footer: 'ENTER  REBIND     ESC  BACK     (ARROW KEYS ALWAYS WORK)' };
 }
 function shopMenu(): MenuDef {
-  const lines: string[] = [];
+  const items: Item[] = [];
   for (let i = 0; i < UP_N; i++) {
     const l = sim.up[i];
-    lines.push((UP_NAME[i] + '              ').slice(0, 14) + ' ' + '#'.repeat(l) + '.'.repeat(UP_MAX - l) + '  ' + (l >= UP_MAX ? 'MAXED   ' : String(sim.price(i)).padStart(3) + ' SCRAP') + '  ' + UP_DESC[i]);
+    items.push({ label: (UP_NAME[i] + '              ').slice(0, 14) + ' ' + '#'.repeat(l) + '.'.repeat(UP_MAX - l) + '  ' + (l >= UP_MAX ? 'MAXED   ' : String(sim.price(i)).padStart(3) + ' SCRAP') + '  ' + UP_DESC[i],
+      act: () => { if (sim.buyUpgrade(i)) { audio.unlock(); say('installed: ' + UP_NAME[i]); bank(); } else say(sim.up[i] >= UP_MAX ? 'already maxed' : 'not enough scrap'); } });
   }
-  lines.push('UNDOCK');
-  return { title: STATION_NAMES[sim.dockType].split('').join(' ') + '   -   SCRAP ' + sim.scrap, lines, footer: 'PRICES x' + sim.dockMult.toFixed(2) + '   HULL REPAIRED + BOOST REFILLED   ENTER  BUY   ESC  UNDOCK' };
+  for (const it of stationExtras()) items.push(it);
+  items.push({ label: 'UNDOCK', act: leaveShop });
+  return { title: STATION_NAMES[sim.dockType].split('').join(' ') + '   -   SCRAP ' + sim.scrap, items, tone: 1,
+    footer: 'PRICES x' + sim.dockMult.toFixed(2) + '   HULL REPAIRED + BOOST REFILLED   ENTER  BUY   ESC  UNDOCK' };
 }
-function menuLen(): number { return state === 'controls' ? ACTIONS.length + 2 : state === 'shop' ? UP_N + 1 : 12; }
+/** Station services added by later systems (survey data, fuel, trade). */
+let stationExtras = (): Item[] => [];
 
-function activate(): void {
-  if (state === 'menu' || state === 'pause') {
-    switch (sel) {
-      case 0: if (state === 'menu') newRun(); state = 'play'; break;
-      case 1: mouseAim = !mouseAim; break;
-      case 2: sim.assist = !sim.assist; break;
-      case 3: sim.aimAssist = (sim.aimAssist + 1) % 4; break;
-      case 4: audio.setVolume(audio.volume >= 1 ? 0.2 : Math.min(1, audio.volume + 0.2)); break;
-      case 5: audio.setMuted(!audio.muted); break;
-      case 6: settings.cb = !settings.cb; break;
-      case 7: settings.reduceFx = !settings.reduceFx; break;
-      case 8: save.hc = !save.hc; break;
-      case 9: save.daily = !save.daily; break;
-      case 10: save.hard = !save.hard; break;
-      case 11: state = 'controls'; sel = 0; return;
-    }
-    persist();
-  } else if (state === 'controls') {
-    if (sel < ACTIONS.length) waitingBind = sel;
-    else if (sel === ACTIONS.length) { for (const a of ACTIONS) save.binds[a] = DEFAULT_BINDS[a]; fb.dockKey = keyLabel(bindOf('dock')); writeSave(save); }
-    else { state = 'pause'; sel = 11; }
-  } else if (state === 'shop') {
-    if (sel < UP_N) {
-      if (sim.buyUpgrade(sel)) { audio.unlock(); say('installed: ' + UP_NAME[sel]); bank(); } else say(sim.up[sel] >= UP_MAX ? 'already maxed' : 'not enough scrap');
-    } else leaveShop();
+// ---- hangar: pick / unlock hulls, stat bars and a rotating preview
+function hangarMenu(): MenuDef {
+  const items: Item[] = ROSTER.map(d => {
+    const u = unlockOf(d.id), have = save.unlocked.includes(d.id), ready = !have && u.ok(save.stats);
+    const status = d.id === save.ship ? 'FLYING' : have ? 'READY' : ready ? 'UNLOCK ' + u.cost + ' SCRAP' : 'LOCKED';
+    return { label: (d.name + '          ').slice(0, 9) + (d.role + '              ').slice(0, 13) + status, act: () => {
+      if (have) { save.ship = d.id; writeSave(save); applyShip(); say(d.name + ' selected'); }
+      else if (!ready) say('locked: ' + u.need.toLowerCase());
+      else if (save.scrap < u.cost) say('not enough scrap (' + save.scrap + '/' + u.cost + ')');
+      else { save.scrap -= u.cost; save.unlocked.push(d.id); save.ship = d.id; writeSave(save); applyShip(); say(d.name + ' unlocked'); }
+    } };
+  });
+  items.push({ label: 'BACK', act: () => { state = 'menu'; sel = 1; } });
+  return { title: 'H A N G A R   -   SCRAP ' + save.scrap, items, footer: 'ENTER  SELECT / UNLOCK     ESC  BACK' };
+}
+function hangarCard(): MenuDef {
+  const d = ROSTER[Math.min(sel, ROSTER.length - 1)], dv = derive(d), u = unlockOf(d.id), have = save.unlocked.includes(d.id);
+  const items: Item[] = [{ label: d.name + '  -  ' + d.role }, { label: d.quirk.toUpperCase() }, { label: '' }];
+  for (const k of RATING_KEYS) items.push({ label: (k + '          ').slice(0, 10) + bar(dv.ratings[k], 20) + String(dv.ratings[k] | 0).padStart(4) });
+  items.push({ label: '' },
+    { label: 'ACCEL ' + dv.accel.toFixed(0) + '  TOP ' + dv.topSpeed + '  0-95% ' + dv.timeToTop.toFixed(1) + 'S' },
+    { label: 'STOP ' + dv.stopDist.toFixed(0) + 'U  TURN CIRCLE ' + dv.turnCircle.toFixed(0) + 'U' },
+    { label: 'HULL ' + d.hullMax + '  SHIELD ' + d.shieldMax + '  EHP ' + dv.ehp.toFixed(0) + '  DPS ' + dv.dps.toFixed(1) },
+    { label: 'GUNS ' + d.hardpoints.length + ' ' + (d.hardpoints[0] === 'turret' ? 'TURRET' : 'FIXED') + '  CARGO ' + d.cargo + '  FUEL ' + d.fuelMax },
+    { label: 'BEST ' + String(save.hiBy[d.id] ?? 0).padStart(7, '0') },
+    { label: have ? '' : 'NEEDS: ' + u.need });
+  return { title: 'S T A T S', items, footer: 'RATINGS: 50 = WREN' };
+}
+function applyShip(): void { sim.setShip(shipById(save.ship)); for (let i = 0; i < UP_N; i++) sim.up[i] = upsOf(save, save.ship)[i]; }
+
+function currentMenu(): MenuDef {
+  switch (state) {
+    case 'controls': return controlsMenu();
+    case 'shop': return shopMenu();
+    case 'hangar': return hangarMenu();
+    case 'logs': return logsMenu();
+    default: return optionsMenu();
   }
 }
+/** Lore fragments (M6); placeholder until the galaxy layer provides them. */
+let logsMenu = (): MenuDef => ({ title: 'S H I P   L O G S', items: [{ label: 'NO LOGS RECOVERED YET' }, { label: 'BACK', act: () => { state = back; sel = 0; } }], footer: 'ESC  BACK' });
+function menuLen(): number { return currentMenu().items.length; }
+function activate(): void { currentMenu().items[sel]?.act?.(); }
 function leaveShop(): void { state = 'play'; bank(); finishTut(); }
 function tryDock(): void {
   if (sim.alive && sim.dockable >= 0 && state === 'play') { sim.serviceShip(); bank(); state = 'shop'; sel = 0; }
@@ -216,12 +253,12 @@ function menuKey(code: string): void {
   switch (code) {
     case 'ArrowUp': case 'KeyW': sel = (sel + n - 1) % n; break;
     case 'ArrowDown': case 'KeyS': sel = (sel + 1) % n; break;
-    case 'ArrowLeft': if ((state === 'menu' || state === 'pause') && sel === 4) { audio.setVolume(Math.max(0, audio.volume - 0.1)); persist(); } break;
-    case 'ArrowRight': if ((state === 'menu' || state === 'pause') && sel === 4) { audio.setVolume(Math.min(1, audio.volume + 0.1)); persist(); } break;
+    case 'ArrowLeft': case 'ArrowRight': currentMenu().items[sel]?.adj?.(code === 'ArrowLeft' ? -1 : 1); break;
     case 'Enter': case 'Space': activate(); break;
     case 'Escape': case 'KeyP':
       if (state === 'shop') leaveShop();
-      else if (state === 'controls') { state = 'pause'; sel = 11; }
+      else if (state === 'controls' || state === 'logs') { state = back; sel = 0; }
+      else if (state === 'hangar') { state = 'menu'; sel = 1; }
       else if (state === 'pause') state = 'play';
       break;
   }
@@ -254,7 +291,7 @@ function onKey(code: string): void {
     case 'F8': settings.chroma = settings.chroma > 0 ? 0 : 0.005; say('aberration ' + (settings.chroma ? 'on' : 'off')); break;
     case 'KeyH': settings.hud = !settings.hud; break;
     case 'KeyT': settings.ramp = (settings.ramp + 1) % RAMPS.length; say('ramp: ' + RAMPS[settings.ramp].name); break;
-    case 'KeyQ': settings.auto = !settings.auto; if (!settings.auto) { govLevel = 3; applyGov(); } say('auto-quality ' + (settings.auto ? 'on' : 'off')); break;
+    case 'F9': settings.auto = !settings.auto; if (!settings.auto) { govLevel = 3; applyGov(); } say('auto-quality ' + (settings.auto ? 'on' : 'off')); break;
     case 'BracketLeft': settings.cellCss = Math.min(24, settings.cellCss + 1); snapBase(); resize(); say('cell ' + settings.cellCss + 'px'); break;
     case 'BracketRight': settings.cellCss = Math.max(4, settings.cellCss - 1); snapBase(); resize(); say('cell ' + settings.cellCss + 'px'); break;
     case 'Minus': settings.bgK = Math.max(0, settings.bgK - 0.04); say('backdrop ' + settings.bgK.toFixed(2)); break;
@@ -374,7 +411,8 @@ function pollInput(): number {
   const debug = demo || ff > 0 || q.has('x') || q.has('y') || q.has('hud') || q.has('perf') || q.has('play');
   if (debug) { state = 'play'; finishTutQuiet(); }
   for (let i = 0; i < ff * 60; i++) { sim.input = demo ? autopilot() : 0; sim.step(); if (!sim.alive && sim.deadT > 1) sim.reset(5); }
-  const qs = q.get('state'); if (qs === 'shop' || qs === 'pause' || qs === 'controls' || qs === 'map') { state = qs; sim.scrap = 140; }
+  if (q.has('unlockall')) { save.unlocked = UNLOCKS.map(u => u.id); }
+  const qs = q.get('state'); if (qs === 'shop' || qs === 'pause' || qs === 'controls' || qs === 'map' || qs === 'hangar' || qs === 'chart' || qs === 'logs') { state = qs; sim.scrap = 140; }
   if (q.has('event')) { sim.triggerEvent(Math.min(4, Math.max(0, ({ comet: 1, meteors: 2, flare: 3, storm: 4 } as Record<string, number>)[q.get('event')!] ?? (parseInt(q.get('event')!, 10) | 0)))); sim.warnT = parseFloat(q.get('evwarn') ?? '0.05'); }
   if (q.has('hp')) sim.hp = parseFloat(q.get('hp')!);
   const spawn = q.get('spawn');
@@ -392,6 +430,26 @@ function pollInput(): number {
   if (q.has('tune')) mountTuner(sim, id => sim.setShip(shipById(id)));
 }
 function finishTutQuiet(): void { tut = 99; }
+/** Hangar: ship list on the left, stat card on the right, rotating glyph preview of the highlighted hull between them. */
+function drawHangar(m: MenuDef, labels: string[], cx: number, cy: number, t: number): void {
+  const wide = renderer.cols >= 150;
+  panel(renderer.glyphs, renderer.cols, renderer.rows, m.title, labels, sel, m.footer, 0, wide ? -48 : 0);
+  if (!wide || sel >= ROSTER.length) return;
+  const c = hangarCard();
+  panel(renderer.glyphs, renderer.cols, renderer.rows, c.title, c.items.map(i => i.label), -1, c.footer, 0, 46);
+  const d = ROSTER[sel], wx = cx, wy = cy + 2;
+  renderer.sprites.add(wx, wy, t * 0.7, d.artSize, d.art, d.art === 17 ? 0.5 + 0.5 * Math.sin(t * 0.6) : d.art === 0 ? 0.5 : Math.max(0, Math.sin(t * 0.9)), 0, 0.5 + 0.4 * Math.sin(t * 2), 0.9, 1);
+}
+/** ?roster=1: every hull side by side (silhouette / glyph-weight check). */
+let rosterView = new URLSearchParams(location.search).has('roster');
+function drawRoster(cx: number, cy: number, t: number): void {
+  for (let i = 0; i < ROSTER.length; i++) {
+    const d = ROSTER[i], wx = cx - 66 + (i % 4) * 44, wy = cy + (i < 4 ? 22 : -18);
+    renderer.sprites.add(wx, wy, Math.PI / 2 + Math.sin(t * 0.5 + i) * 0.15, d.artSize, d.art, d.art === 0 ? 0.5 : 0.6, 0, 0.9, 0.72, 1);
+    const row = Math.round(renderer.rows * 0.5 - (wy - cy) / renderer.aspect) + 10;
+    renderer.glyphs.text(d.name, Math.round(renderer.cols * 0.5 + (wx - cx)) - (d.name.length >> 1), row, 0.6, 1.2, 1.0, 1);
+  }
+}
 snapBase();
 function resize(): void { renderer.resize(innerWidth, innerHeight, devicePixelRatio || 1); }
 addEventListener('resize', resize);
@@ -479,7 +537,7 @@ function frame(now: number): void {
     lastKills = sim.kills;
     if (sim.hp < lastHp - 0.5) rumble(lastHp - sim.hp);
     lastHp = sim.hp;
-    if (!sim.alive && !deathHandled) { deathHandled = true; if (sim.score > save.hi) { save.hi = sim.score; } bank(); }
+    if (!sim.alive && !deathHandled) { deathHandled = true; if (sim.score > save.hi) { save.hi = sim.score; } save.hiBy[save.ship] = Math.max(save.hiBy[save.ship] ?? 0, sim.score); bank(); }
     tutorial(dt);
     visited.add(((sectorOf(sim.sx) & 0xffff) << 16) | (sectorOf(sim.sy) & 0xffff));
   } else if (attract) {
@@ -511,14 +569,18 @@ function frame(now: number): void {
   renderer.beginFrame();
   fb.showReticle = !demo;
   fb.fx = settings.reduceFx ? 0.35 : 1;
-  fb.build(cx, cy, alpha, t, settings.hud && state !== 'menu');
+  fb.build(cx, cy, alpha, t, settings.hud && state !== 'menu' && state !== 'hangar' && state !== 'logs' && state !== 'chart');
+  if (rosterView) drawRoster(cx, cy, t);
   if (state !== 'play') {
     if (state === 'map') drawMap();
     else {
-      const m = state === 'controls' ? controlsMenu() : state === 'shop' ? shopMenu() : optionsMenu();
-      const card = (state === 'menu' || state === 'pause') && renderer.cols >= 130;
-      panel(renderer.glyphs, renderer.cols, renderer.rows, m.title, m.lines, sel, m.footer, state === 'shop' ? 1 : 0, card ? -34 : 0);
-      if (card) { const c = controlsCard(); panel(renderer.glyphs, renderer.cols, renderer.rows, c.title, c.lines, -1, c.footer, 0, 40); }
+      const m = currentMenu(), labels = m.items.map(i => i.label);
+      if (state === 'hangar') drawHangar(m, labels, cx, cy, t);
+      else {
+        const card = (state === 'menu' || state === 'pause') && renderer.cols >= 130;
+        panel(renderer.glyphs, renderer.cols, renderer.rows, m.title, labels, sel, m.footer, m.tone ?? 0, card ? -34 : 0);
+        if (card) { const c = controlsCard(); panel(renderer.glyphs, renderer.cols, renderer.rows, c.title, c.items.map(i => i.label), -1, c.footer, 0, 40); }
+      }
     }
   }
   if (toastT > 0) { toastT -= dt; renderer.glyphs.text(toast, 2, renderer.rows - 2, 1.2, 1.2, 0.6, 1); }

@@ -49,19 +49,149 @@ mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 // Each field(q) returns the silhouette distance, writes a bevelled height h (0..~1.2),
 // a material flag mt (1 = flame/emissive, no lighting) and three part distances dp for material picking.
 
-// ---- player: X-wing-style starfighter, nose +x, ~23 units (top view: two splayed wing blades per side)
+// ---- player hull state (set per instance in main): gS = ship-specific state 0..1, gP = unmirrored local position
+float gS = 0.0; vec2 gP = vec2(0.0);
+
+// ---- wren: original all-rounder. Swept delta wings with raked feather tips, canards, one engine pod per side, split tail. ~26 units
 float fPlayer(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  float dF = min(sdUneven(q, vec2(-6.0, 0.0), vec2(16.0, 0.0), 1.5, 0.1), sdEll(q - vec2(-5.0, 0.0), vec2(5.0, 2.0)));
-  float dW = min(sdUneven(q, vec2(0.5, 1.2), vec2(-7.5, 8.6), 1.5, 0.8), sdUneven(q, vec2(0.5, 1.4), vec2(-9.0, 12.2), 1.5, 0.8));
-  float dN = min(sdUneven(q, vec2(0.0, 2.9), vec2(-9.8, 2.9), 1.25, 1.25),
-             min(sdSeg(q, vec2(-7.5, 8.6), vec2(3.0, 8.6)) - 0.24, sdSeg(q, vec2(-9.0, 12.2), vec2(5.5, 12.2)) - 0.24));
-  float dH = min(dF, min(dW, dN));
+  float dF = min(sdUneven(q, vec2(-9.0, 0.0), vec2(15.0, 0.0), 2.0, 0.15), sdEll(q - vec2(-3.0, 0.0), vec2(6.0, 2.3)));
+  float dW = min(sdTri(q, vec2(4.0, 1.4), vec2(-7.5, 10.5), vec2(-6.5, 1.4)) - 0.15, sdSeg(q, vec2(-7.5, 10.5), vec2(-3.5, 11.6)) - 0.35);
+  float dC = sdTri(q, vec2(9.5, 1.0), vec2(5.5, 3.8), vec2(5.0, 1.0));
+  float dN = min(sdBox(q - vec2(-8.6, 2.6), vec2(2.0, 1.25)) - 0.3, sdSeg(q, vec2(-7.5, 0.9), vec2(-12.0, 4.4)) - 0.45);
+  float dH = min(min(dF, dW), min(dC, dN));
   float L = 1.2 + 9.0 * thr;
-  float dFl = sdUneven(q, vec2(-9.8, 2.9), vec2(-9.8 - L, 2.9), 0.95, 0.03);
-  h = max(max(bev(-dF, 1.5), bev(-dW, 0.6) * 0.5), bev(-dN, 1.0) * 0.85);
-  dp = vec3(dF, dW, dN);
+  float dFl = sdUneven(q, vec2(-10.9, 2.6), vec2(-10.9 - L, 2.6), 0.95, 0.03);
+  h = max(max(bev(-dF, 1.8), bev(-dW, 0.6) * 0.5), max(bev(-dN, 1.0) * 0.85, bev(-dC, 0.5) * 0.6));
+  dp = vec3(dF, min(dW, dC), dN);
   mt = dFl < dH ? 1.0 : 0.0;
   return min(dH, dFl);
+}
+
+// ---- needle: interceptor dart, one spine, swept fins, very light, long bright tail
+float fNeedle(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dS = sdUneven(q, vec2(-11.0, 0.0), vec2(15.0, 0.0), 1.15, 0.05);
+  float dF = sdTri(q, vec2(-1.5, 0.6), vec2(-10.0, 6.5), vec2(-7.5, 0.6)) - 0.05;
+  float dC = sdTri(q, vec2(7.0, 0.5), vec2(3.5, 2.6), vec2(3.0, 0.5));
+  float dE = sdBox(q - vec2(-11.5, 0.0), vec2(1.3, 0.85)) - 0.2;
+  float dH = min(min(dS, dF), min(dC, dE));
+  float L = 3.0 + 16.0 * thr;
+  float dFl = sdUneven(q, vec2(-12.8, 0.0), vec2(-12.8 - L, 0.0), 0.8, 0.02);
+  h = max(max(bev(-dS, 1.1), bev(-dF, 0.4) * 0.4), max(bev(-dC, 0.4) * 0.4, bev(-dE, 0.8) * 0.7));
+  dp = vec3(dS, min(dF, dC), dE);
+  mt = dFl < dH ? 1.0 : 0.0;
+  return min(dH, dFl);
+}
+
+// ---- anvil: squat armoured wedge, side sponsons, four forward barrels
+float fAnvil(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dB = min(sdBox(q - vec2(-2.5, 0.0), vec2(6.5, 5.2)) - 0.6, sdTri(q, vec2(9.0, 0.0), vec2(3.0, 5.8), vec2(3.0, 0.0)));
+  float dP = sdBox(q - vec2(-1.0, 6.4), vec2(5.5, 1.3)) - 0.3;
+  float dBr = min(sdSeg(q, vec2(4.0, 1.1), vec2(13.5, 1.1)) - 0.45, sdSeg(q, vec2(2.5, 3.4), vec2(12.0, 3.4)) - 0.5);
+  float dE = sdBox(q - vec2(-10.0, 3.0), vec2(1.6, 1.8)) - 0.3;
+  float dH = min(min(dB, dP), min(dBr, dE));
+  float L = 1.0 + 6.0 * thr;
+  float dFl = sdUneven(q, vec2(-11.9, 3.0), vec2(-11.9 - L, 3.0), 1.2, 0.04);
+  h = max(max(bev(-dB, 2.4) * 1.1, bev(-dP, 1.0) * 0.9), max(bev(-dBr, 0.45) * 0.8, bev(-dE, 1.0) * 0.8));
+  dp = vec3(dB, dBr, min(dP, dE));
+  mt = dFl < dH ? 1.0 : 0.0;
+  return min(dH, dFl);
+}
+
+// ---- sextant: kite hull, long tail boom, lens core; sensor petals unfold while scanning (gS)
+float fSext(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dK = sdTri(q, vec2(9.0, 0.0), vec2(0.5, 6.5), vec2(-6.0, 0.0)) - 0.2;
+  float dBm = min(sdSeg(q, vec2(-5.0, 0.0), vec2(-16.0, 0.0)) - 0.55, sdTri(q, vec2(-13.0, 0.4), vec2(-17.0, 3.6), vec2(-16.5, 0.4)));
+  float dL = length(q - vec2(1.5, 0.0)) - 2.4;
+  float dPt = 1e3;
+  if (gS > 0.01) for (int i = 0; i < 3; i++) {
+    float a = 0.7 + float(i) * 0.75; vec2 dir = vec2(cos(a), sin(a));
+    dPt = min(dPt, sdUneven(q, vec2(1.5, 0.0) + dir * 2.0, vec2(1.5, 0.0) + dir * (2.5 + 7.0 * gS), 0.9 * gS + 0.2, 0.1));
+  }
+  float dE = sdBox(q - vec2(-6.5, 1.6), vec2(1.2, 0.9)) - 0.2;
+  float dH = min(min(dK, dBm), min(min(dL, dPt), dE));
+  float L = 1.0 + 6.0 * thr;
+  float dFl = sdUneven(q, vec2(-7.9, 1.6), vec2(-7.9 - L, 1.6), 0.75, 0.03);
+  h = max(max(bev(-dK, 2.0), bev(-dBm, 0.5) * 0.6), max(bev(-dL, 2.4) * 1.3, bev(-dPt, 0.4) * 0.5));
+  dp = vec3(dK, min(dL, dPt), min(dBm, dE));
+  mt = dFl < dH ? 1.0 : 0.0;
+  return min(dH, dFl);
+}
+
+// ---- mule: catamaran hauler, two hulls joined by a container lattice; containers shown = hold fill (gS); rear turret
+float fMule(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dHu = sdUneven(q, vec2(-12.0, 6.2), vec2(12.0, 6.2), 2.0, 1.0);
+  float dLat = abs(sdBox(q, vec2(8.6, 4.6))) - 0.3;
+  dLat = min(dLat, sdSeg(q, vec2(-8.6, 0.0), vec2(8.6, 0.0)) - 0.25);
+  for (int i = 0; i < 3; i++) dLat = min(dLat, sdSeg(q, vec2(-4.3 + float(i) * 4.3, 0.0), vec2(-4.3 + float(i) * 4.3, 4.6)) - 0.25);
+  float n = floor(gS * 8.0 + 0.5), side = gP.y >= 0.0 ? 0.0 : 4.0, dCt = 1e3;
+  for (int i = 0; i < 4; i++) if (float(i) + side < n) dCt = min(dCt, sdBox(q - vec2(-6.45 + float(i) * 4.3, 2.3), vec2(1.75, 1.85)) - 0.15);
+  float dT = min(length(q - vec2(-10.0, 0.0)) - 1.8, sdSeg(q, vec2(-10.0, 0.0), vec2(-13.5, 0.6)) - 0.4);
+  float dE = sdBox(q - vec2(-12.8, 6.2), vec2(1.3, 1.4)) - 0.2;
+  float dH = min(min(dHu, dLat), min(min(dCt, dT), dE));
+  float L = 1.0 + 5.0 * thr;
+  float dFl = sdUneven(q, vec2(-14.3, 6.2), vec2(-14.3 - L, 6.2), 1.0, 0.04);
+  h = max(max(bev(-dHu, 2.0), bev(-dLat, 0.3) * 0.5), max(bev(-dCt, 0.8) * 0.9, bev(-dT, 1.2) * 1.1));
+  dp = vec3(dHu, dCt, min(dLat, min(dT, dE)));
+  mt = dFl < dH ? 1.0 : 0.0;
+  return min(dH, dFl);
+}
+
+// ---- shade: flat chevron manta, very low glyph density, fades out while running dark (gS)
+float fShade(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dW = max(sdTri(q, vec2(9.0, 0.0), vec2(-7.0, 11.5), vec2(-7.0, 0.0)), -sdTri(q, vec2(-2.5, 0.0), vec2(-8.5, 8.0), vec2(-8.5, 0.0)));
+  float dSp = sdSeg(q, vec2(-6.5, 10.8), vec2(-10.5, 12.5)) - 0.25;
+  float dC = sdEll(q - vec2(2.0, 0.0), vec2(4.0, 1.4));
+  float dH = min(min(dW, dSp), dC);
+  float L = 0.8 + 4.0 * thr;
+  float dFl = sdUneven(q, vec2(-3.0, 1.2), vec2(-3.0 - L, 1.2), 0.6, 0.02);
+  h = max(bev(-dW, 1.2) * 0.45, bev(-dC, 1.0) * 0.8);
+  dp = vec3(dC, dW, dSp);
+  mt = dFl < dH ? 1.0 : 0.0;
+  return min(dH, dFl);
+}
+
+// ---- magpie: asymmetric patchwork salvager with one articulated grabber arm (gS = reach 0..1). Not mirrored.
+float fMagpie(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dB = min(sdBox(q - vec2(-0.5, 0.3), vec2(7.0, 3.3)) - 0.5, sdTri(q, vec2(10.5, 0.6), vec2(6.0, 3.4), vec2(6.0, -2.4)));
+  float dPa = min(sdBox(q - vec2(-2.5, -4.1), vec2(4.2, 1.5)) - 0.3, sdBox(q - vec2(2.5, 4.2), vec2(2.6, 1.0)) - 0.25);
+  vec2 sh = vec2(3.5, 4.8), el = sh + vec2(2.0 + 4.0 * gS, 2.0 + 1.5 * gS), cl = el + vec2(3.0 + 6.0 * gS, -1.0 - 2.5 * gS);
+  float dA = min(sdSeg(q, sh, el) - 0.45, sdSeg(q, el, cl) - 0.35);
+  float dCl = abs(length(q - cl) - 1.2) - 0.3;
+  float dE = min(sdBox(q - vec2(-8.6, 1.6), vec2(1.3, 1.1)) - 0.2, sdBox(q - vec2(-8.0, -3.4), vec2(1.0, 0.9)) - 0.2);
+  float dH = min(min(dB, dPa), min(min(dA, dCl), dE));
+  float L = 0.8 + 5.0 * thr;
+  float dFl = min(sdUneven(q, vec2(-10.0, 1.6), vec2(-10.0 - L, 1.6), 0.8, 0.03), sdUneven(q, vec2(-9.1, -3.4), vec2(-9.1 - L * 0.8, -3.4), 0.65, 0.03));
+  h = max(max(bev(-dB, 2.0), bev(-dPa, 1.0) * 0.8), max(bev(-min(dA, dCl), 0.4) * 0.7, bev(-dE, 0.8) * 0.7));
+  dp = vec3(dB, dPa, min(min(dA, dCl), dE));
+  mt = dFl < dH ? 1.0 : 0.0;
+  return min(dH, dFl);
+}
+
+// ---- hive: hex-cell cluster of pods; rear bays iris open (gS) to release drones
+float sdHex(vec2 p, float r){ const vec3 k = vec3(-0.866025404, 0.5, 0.577350269); p = abs(p); p -= 2.0 * min(dot(k.xy, p), 0.0) * k.xy; p -= vec2(clamp(p.x, -k.z * r, k.z * r), r); return length(p) * sign(p.y); }
+float hivePods(vec2 q){
+  float d = sdHex(q, 2.6);
+  d = min(d, sdHex(q - vec2(5.0, 0.0), 2.6)); d = min(d, sdHex(q - vec2(-5.0, 0.0), 2.6));
+  d = min(d, sdHex(q - vec2(2.5, 4.33), 2.6)); d = min(d, sdHex(q - vec2(-2.5, 4.33), 2.6)); d = min(d, sdHex(q - vec2(-7.5, 4.33), 2.2));
+  return d;
+}
+float fHive(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dC = hivePods(q) - 0.3;
+  float dE = sdBox(q - vec2(-10.0, 1.6), vec2(1.4, 1.2)) - 0.2;
+  float dH = min(dC, dE);
+  float L = 0.8 + 4.0 * thr;
+  float dFl = sdUneven(q, vec2(-11.6, 1.6), vec2(-11.6 - L, 1.6), 0.9, 0.04);
+  h = max(bev(-dC, 1.6) * 1.1, bev(-dE, 0.8) * 0.7);
+  dp = vec3(dC, dE, dC + 0.4);
+  mt = dFl < dH ? 1.0 : 0.0;
+  return min(dH, dFl);
+}
+
+// ---- wingman drone (Hive): tiny friendly dart
+float fWing(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dB = sdTri(q, vec2(3.5, 0.0), vec2(-2.5, 2.4), vec2(-1.5, 0.0));
+  h = bev(-dB, 0.8); dp = vec3(dB, 1e3, 1e3); mt = 0.0;
+  return dB;
 }
 
 // ---- drone: insectoid scout, ~14 units
@@ -215,6 +345,14 @@ float field(int ty, vec2 q, float thr, out float h, out float mt, out vec3 dp){
   if (ty == 11) return fSplit(q, thr, h, mt, dp);
   if (ty == 12) return fRam(q, thr, h, mt, dp);
   if (ty == 13) return fTend(q, thr, h, mt, dp);
+  if (ty == 14) return fNeedle(q, thr, h, mt, dp);
+  if (ty == 15) return fAnvil(q, thr, h, mt, dp);
+  if (ty == 16) return fSext(q, thr, h, mt, dp);
+  if (ty == 17) return fMule(q, thr, h, mt, dp);
+  if (ty == 18) return fShade(q, thr, h, mt, dp);
+  if (ty == 19) return fMagpie(q, thr, h, mt, dp);
+  if (ty == 20) return fHive(q, thr, h, mt, dp);
+  if (ty == 21) return fWing(q, thr, h, mt, dp);
   return fStation(q, thr, h, mt, dp);
 }
 
@@ -225,33 +363,83 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
   emis = vec3(0.0); spec = 0.35;
   float blink = 0.5 + 0.5 * sin(uTime * 5.0 + seed * 20.0);
   vec3 col;
-  if (ty == 0) {
-    vec3 hullC = vec3(0.92, 0.94, 0.98), wingC = vec3(0.80, 0.82, 0.86), nacC = vec3(0.50, 0.52, 0.56);
+  if (ty == 0) {                       // wren: cream hull, grey wings, mint accent (the player's colour)
+    vec3 hullC = vec3(0.90, 0.90, 0.86), wingC = vec3(0.70, 0.72, 0.76), nacC = vec3(0.46, 0.48, 0.52), mint = vec3(0.20, 0.95, 0.70);
     float m = min(dp.x, min(dp.y, dp.z));
     col = m == dp.x ? hullC : (m == dp.y ? wingC : nacC);
-    if (m == dp.y) {
-      col = mix(col, vec3(0.92, 0.08, 0.06), clamp(smoothstep(0.6, 0.3, abs(q.y - 9.0)) + smoothstep(0.6, 0.3, abs(q.y - 5.4)), 0.0, 1.0));
-      col *= 1.0 - 0.25 * panel(q.x * 0.35, 0.06);
-    }
-    if (m == dp.x) {
-      col *= 1.0 - 0.25 * panel(q.x * 0.28 + 0.1, 0.05);
-      col = mix(col, vec3(0.9, 0.2, 0.15), smoothstep(0.3, 0.15, abs(q.y - 1.0)) * step(-3.0, q.x) * step(q.x, 4.0));
-    }
-    if (m == dp.x) col = mix(col, vec3(1.0, 0.72, 0.2), smoothstep(10.5, 11.5, q.x));   // gold nose cap
-    if (m == dp.z) col = mix(col, vec3(0.9, 0.1, 0.08), smoothstep(0.4, 0.15, abs(q.x + 3.5)) * 0.85);
-    float dc = sdEll(vec2(q.x, p.y) - vec2(2.0, 0.0), vec2(3.0, 1.0));
+    if (m == dp.y) { col = mix(col, mint, smoothstep(0.55, 0.25, abs(q.y - (1.4 + (4.0 - q.x) * 0.79)))); col *= 1.0 - 0.22 * panel(q.x * 0.35, 0.06); }
+    if (m == dp.x) { col *= 1.0 - 0.22 * panel(q.x * 0.28 + 0.1, 0.05); col = mix(col, mint, smoothstep(0.3, 0.12, abs(q.y - 1.1)) * step(-4.0, q.x) * step(q.x, 6.0)); }
+    float dc = sdEll(vec2(q.x, p.y) - vec2(3.0, 0.0), vec2(3.2, 1.0));
     float glass = smoothstep(0.1, -0.1, dc);
-    vec3 gl = vec3(0.04, 0.20, 0.34) + vec3(0.5, 0.9, 1.3) * smoothstep(0.15, 0.9, -dc) * 0.45;
-    col = mix(col, gl, glass);
-    emis += glass * vec3(0.04, 0.22, 0.34) * (0.6 + 0.4 * blink) * 0.6;
-    float dome = length(vec2(q.x + 4.5, p.y) / vec2(1.3, 1.1));
-    col = mix(col, vec3(0.5, 0.6, 0.75), smoothstep(1.0, 0.8, dome));
-    float nz = length((q - vec2(-9.6, 2.9)) / vec2(0.9, 1.0));
-    emis += smoothstep(1.0, 0.0, nz) * mix(vec3(1.4, 0.7, 0.25), vec3(0.8, 1.3, 2.0), clamp(thr - 0.9, 0.0, 1.0)) * (0.35 + thr);
-    float lt = length(vec2(q.x - 5.5, q.y - 12.2));
-    emis += smoothstep(0.7, 0.0, lt) * (p.y > 0.0 ? vec3(2.0, 0.2, 0.15) : vec3(0.2, 2.0, 0.4)) * blink * 1.5;
-    emis += (smoothstep(0.8, 0.0, length(q - vec2(3.0, 8.6))) + smoothstep(0.8, 0.0, length(q - vec2(5.5, 12.2)))) * vec3(1.2, 0.35, 0.1) * (0.4 + 0.6 * blink);   // cannon tips
+    col = mix(col, vec3(0.04, 0.20, 0.30) + vec3(0.4, 1.0, 0.9) * smoothstep(0.15, 0.9, -dc) * 0.45, glass);
+    emis += glass * vec3(0.04, 0.26, 0.22) * (0.6 + 0.4 * blink) * 0.6;
+    emis += smoothstep(1.0, 0.0, length((q - vec2(-10.7, 2.6)) / vec2(0.9, 1.0))) * mix(vec3(1.4, 0.7, 0.25), vec3(0.8, 1.3, 2.0), clamp(thr - 0.9, 0.0, 1.0)) * (0.35 + thr);
+    emis += smoothstep(0.7, 0.0, length(q - vec2(-3.5, 11.6))) * (p.y > 0.0 ? vec3(2.0, 0.2, 0.15) : vec3(0.2, 2.0, 0.4)) * blink * 1.5;
+    emis += smoothstep(0.8, 0.0, length(q - vec2(15.0, 0.0))) * mint * 1.4;
     spec = m == dp.x ? 0.7 : 0.3;
+  } else if (ty == 14) {               // needle: dim silver (light glyph mass), bright spine and tip
+    float m = min(dp.x, min(dp.y, dp.z));
+    col = m == dp.x ? vec3(0.42, 0.46, 0.54) : (m == dp.y ? vec3(0.30, 0.34, 0.42) : vec3(0.24, 0.24, 0.28));
+    col = mix(col, vec3(0.75, 0.85, 1.0), smoothstep(0.35, 0.1, abs(q.y)) * step(-9.0, q.x) * step(q.x, 12.0) * 0.6);
+    emis += smoothstep(0.9, 0.0, length(q - vec2(14.5, 0.0))) * vec3(0.5, 1.4, 2.0) * (0.6 + 0.4 * blink);
+    emis += smoothstep(1.0, 0.0, length((q - vec2(-12.6, 0.0)) / vec2(0.8, 1.0))) * vec3(1.0, 1.4, 2.2) * (0.4 + thr);
+    spec = 0.8;
+  } else if (ty == 15) {               // anvil: bright gunmetal plating rows (heavy glyphs), hazard stripes, per-barrel muzzle flash
+    float m = min(dp.x, min(dp.y, dp.z));
+    col = m == dp.x ? vec3(0.62, 0.60, 0.58) : (m == dp.y ? vec3(0.30, 0.30, 0.33) : vec3(0.48, 0.44, 0.38));
+    col *= 1.0 - 0.35 * panel(q.x * 0.55, 0.07) - 0.25 * panel(q.y * 0.6 + 0.25, 0.07);
+    col = mix(col, vec3(0.95, 0.62, 0.10), step(0.5, fract((q.x + q.y) * 0.5)) * smoothstep(0.6, 0.3, abs(q.y - 6.4)) * step(m, dp.z + 0.001));
+    emis += smoothstep(0.6, 0.2, abs(q.x - 5.0)) * smoothstep(0.5, 0.2, abs(q.y - 2.2)) * vec3(1.6, 0.2, 0.1) * (0.5 + 0.5 * blink);
+    if (gS > 0.0) { float lat = gS * 10.0 - 5.0; vec2 tip = vec2(abs(lat) < 2.0 ? 13.5 : 12.0, lat); emis += smoothstep(1.8, 0.0, length(p - tip)) * vec3(2.6, 1.8, 0.7) * 1.5; }
+    emis += smoothstep(1.2, 0.0, length((q - vec2(-11.7, 3.0)) / vec2(1.0, 1.3))) * vec3(1.6, 0.6, 0.2) * (0.4 + thr);
+    spec = 0.45;
+  } else if (ty == 16) {               // sextant: pale teal kite, glass lens that pulses while scanning, gold petals
+    float m = min(dp.x, min(dp.y, dp.z));
+    col = m == dp.x ? vec3(0.70, 0.84, 0.84) : (m == dp.y ? vec3(0.90, 0.80, 0.50) : vec3(0.40, 0.48, 0.50));
+    col *= 1.0 - 0.2 * panel(q.x * 0.4, 0.05);
+    float lens = length(q - vec2(1.5, 0.0));
+    float pulse = 0.5 + 0.5 * sin(uTime * (3.0 + 6.0 * gS));
+    col = mix(col, vec3(0.04, 0.16, 0.28), smoothstep(2.4, 2.0, lens));
+    emis += smoothstep(2.2, 0.0, lens) * vec3(0.3, 1.2, 1.6) * (0.35 + gS * 1.4 * pulse);
+    emis += smoothstep(0.35, 0.0, abs(lens - 2.2)) * vec3(0.8, 1.6, 1.8) * 0.4;
+    emis += smoothstep(0.9, 0.0, length((q - vec2(-7.8, 1.6)) / vec2(0.8, 1.0))) * vec3(0.4, 1.2, 1.4) * (0.3 + thr);
+    spec = 0.6;
+  } else if (ty == 17) {               // mule: olive hulls, coloured containers, grey lattice, rear turret light
+    float m = min(dp.x, min(dp.y, dp.z));
+    float ci = floor((q.x + 8.6) / 4.3) + (p.y >= 0.0 ? 0.0 : 4.0);
+    vec3 cc = mix(vec3(0.75, 0.38, 0.12), vec3(0.18, 0.40, 0.70), step(0.5, hash12(vec2(ci, 3.0))));
+    cc = mix(cc, vec3(0.70, 0.18, 0.15), step(0.75, hash12(vec2(ci, 9.0))));
+    col = m == dp.x ? vec3(0.44, 0.46, 0.32) : (m == dp.y ? cc : vec3(0.38, 0.38, 0.40));
+    col *= 1.0 - 0.3 * panel(q.x * 0.5, 0.06) * (m == dp.y ? 1.0 : 0.4);
+    emis += smoothstep(0.7, 0.0, length(q - vec2(-10.0, 0.0))) * vec3(1.8, 0.3, 0.2) * blink;
+    emis += smoothstep(1.0, 0.0, length((q - vec2(-14.1, 6.2)) / vec2(0.9, 1.1))) * vec3(1.5, 0.7, 0.25) * (0.4 + thr);
+    spec = 0.35;
+  } else if (ty == 18) {               // shade: near-black violet with faint edge light
+    float m = min(dp.x, min(dp.y, dp.z));
+    col = m == dp.x ? vec3(0.22, 0.16, 0.32) : vec3(0.12, 0.09, 0.18);
+    emis += smoothstep(0.5, 0.0, abs(dp.y + 0.3)) * vec3(0.35, 0.22, 0.75) * 0.6;
+    emis += smoothstep(0.8, 0.0, length((q - vec2(-2.8, 1.2)) / vec2(0.7, 0.9))) * vec3(0.7, 0.4, 1.4) * (0.2 + thr);
+    spec = 0.9;
+  } else if (ty == 19) {               // magpie: rust patchwork with teal / grey panels and a yellow arm
+    float m = min(dp.x, min(dp.y, dp.z));
+    vec3 patchC = mix(vec3(0.25, 0.45, 0.45), vec3(0.50, 0.50, 0.52), step(0.5, hash12(floor(q * 0.35) + 7.0)));
+    col = m == dp.x ? mix(vec3(0.52, 0.32, 0.20), patchC, step(0.62, hash12(floor(q * 0.3)))) : (m == dp.y ? patchC : vec3(0.82, 0.70, 0.20));
+    col *= 1.0 - 0.3 * panel(q.x * 0.3 + 0.1, 0.06) - 0.2 * panel(q.y * 0.3, 0.06);
+    emis += smoothstep(1.4, 0.0, length(q - (vec2(3.5, 4.8) + vec2(5.0 + 10.0 * gS, 1.0 - 1.0 * gS)))) * vec3(0.4, 1.6, 0.9) * gS;
+    emis += smoothstep(0.9, 0.0, length((q - vec2(-9.8, 1.6)) / vec2(0.8, 1.0))) * vec3(1.6, 0.8, 0.3) * (0.4 + thr);
+    spec = 0.35;
+  } else if (ty == 20) {               // hive: honey hex pods, dark seams; rear bays glow as they iris open
+    col = vec3(0.78, 0.56, 0.18) * (0.75 + 0.25 * smoothstep(0.0, -1.2, dp.x));
+    col *= 1.0 - 0.6 * smoothstep(-0.5, -0.05, dp.x);
+    float bay = min(length(q - vec2(-5.0, 0.0)), length(q - vec2(-7.5, 4.33)));
+    col = mix(col, vec3(0.05, 0.03, 0.02), smoothstep(1.6 * gS, 1.4 * gS - 0.1, bay) * step(0.05, gS));
+    emis += smoothstep(0.4, 0.0, abs(bay - 1.6 * gS)) * vec3(1.8, 0.9, 0.2) * gS;
+    emis += smoothstep(0.9, 0.0, length((q - vec2(-11.4, 1.6)) / vec2(0.8, 1.0))) * vec3(1.6, 0.9, 0.3) * (0.4 + thr);
+    spec = 0.4;
+  } else if (ty == 21) {               // wingman drone: friendly mint
+    col = vec3(0.30, 0.80, 0.60);
+    emis += smoothstep(1.5, 0.0, length(q - vec2(-1.8, 0.0))) * vec3(0.3, 1.6, 1.0);
+    spec = 0.5;
   } else if (ty == 1) {
     col = mix(vec3(0.30, 0.08, 0.12), vec3(0.55, 0.14, 0.16), smoothstep(0.0, 1.0, h));
     float eye = length(vec2(p.x - 1.1, p.y) / vec2(1.2, 1.0));
@@ -364,22 +552,28 @@ void main(){
   vec3 col; float cov;
 
   if (ty <= 3 || ty == 8 || ty >= 9) {
-    bool isSt = ty == 8;
+    bool isSt = ty == 8, noMir = isSt || ty == 19;
     float thr = aux;
-    vec2 q = isSt ? p : vec2(p.x, abs(p.y));
+    gS = seed; gP = p;
+    vec2 q = noMir ? p : vec2(p.x, abs(p.y));
     float h, mt; vec3 dp;
     float d = isSt ? fStation(q, uTime, h, mt, dp) : field(ty, q, thr, h, mt, dp);
     cov = clamp(0.5 - d / px, 0.0, 1.0);
     if (cov <= 0.0) discard;
     if (mt > 0.5) {   // flame: emissive, no lighting
-      float u = clamp((-p.x - 9.0) / (ty == 0 ? 11.0 : 14.0), 0.0, 1.0);
+      float fx0 = ty == 14 ? 12.8 : ty == 18 ? 3.0 : ty == 17 ? 14.3 : 9.0, fln = ty == 14 ? 19.0 : ty == 0 ? 11.0 : 14.0;
+      float u = clamp((-p.x - fx0) / fln, 0.0, 1.0);
       float boost = clamp(thr - 0.9, 0.0, 1.0);
       vec3 hot = mix(vec3(2.4, 1.9, 1.2), vec3(1.0, 1.7, 2.6), boost);
       vec3 cool = mix(vec3(1.5, 0.45, 0.1), vec3(0.15, 0.5, 1.6), boost);
       if (ty == 10) { hot = vec3(1.4, 1.9, 2.4); cool = vec3(0.2, 0.6, 1.4); }
       else if (ty == 11) { hot = vec3(2.2, 1.6, 0.5); cool = vec3(1.2, 0.5, 0.1); }
       else if (ty == 13) { hot = vec3(0.8, 2.0, 1.2); cool = vec3(0.1, 0.8, 0.4); }
-      else if (ty != 0 && ty != 2 && ty != 9 && ty != 12) { hot = vec3(1.6, 0.4, 1.2); cool = vec3(0.6, 0.1, 0.5); }
+      else if (ty == 14) { hot = vec3(2.0, 2.2, 2.6); cool = mix(vec3(0.4, 0.8, 2.0), vec3(0.3, 1.2, 2.4), boost); }
+      else if (ty == 16) { hot = vec3(1.2, 2.2, 2.2); cool = vec3(0.1, 0.8, 1.0); }
+      else if (ty == 18) { hot = vec3(0.8, 0.5, 1.4); cool = vec3(0.25, 0.1, 0.5); }
+      else if (ty == 20) { hot = vec3(2.2, 1.5, 0.5); cool = vec3(1.2, 0.5, 0.1); }
+      else if (ty != 0 && ty != 2 && ty != 9 && ty != 12 && ty != 15 && ty != 17 && ty != 19) { hot = vec3(1.6, 0.4, 1.2); cool = vec3(0.6, 0.1, 0.5); }
       col = mix(hot, cool, clamp(u * 1.4, 0.0, 1.0)) * (1.1 - 0.7 * u);
       float fl = 0.75 + 0.25 * sin(uTime * 60.0 + q.x * 3.0);
       col *= fl; cov *= 0.95 - 0.35 * u;
@@ -388,7 +582,7 @@ void main(){
       float e = 0.35;
       if (isSt) { fStation(q + vec2(e, 0.0), uTime, h1, m1, d1); fStation(q + vec2(0.0, e), uTime, h2, m1, d1); }
       else { field(ty, q + vec2(e, 0.0), thr, h1, m1, d1); field(ty, q + vec2(0.0, e), thr, h2, m1, d1); }
-      float sgn = isSt ? 1.0 : (p.y >= 0.0 ? 1.0 : -1.0);
+      float sgn = noMir ? 1.0 : (p.y >= 0.0 ? 1.0 : -1.0);
       vec3 n = normalize(vec3(-(h1 - h) / e * 1.6, -(h2 - h) / e * 1.6 * sgn, 1.0));
       vec3 emis; float spec;
       vec3 al = paint(ty, q, p, dp, h, thr, seed, emis, spec);
@@ -450,6 +644,7 @@ void main(){
     float core = smoothstep(0.9, 0.0, length(p / vec2(1.4, 1.0)));
     col = mix(aux > 0.5 ? vec3(1.9, 0.95, 0.1) : vec3(0.2, 1.7, 0.3), vec3(1.7, 2.3, 1.6), core);
   }
+  if (ty == 18) { cov *= 0.72 - 0.62 * seed; col *= 1.0 - 0.7 * seed; }      // shade: sparse glyphs, near-invisible running dark
   col += vec3(1.3) * flash;
   o = vec4(col * cov, cov);
 }`;

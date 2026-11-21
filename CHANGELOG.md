@@ -13,3 +13,12 @@
 - New: strafe (`Z`/`C`, d-pad left/right) using `thrustLat`; reverse thrust while braking near standstill (`thrustRev`, 0 on Wren); multi-charge dash.
 - `?tune=1` live tuning panel; `?ship=<id>` flies a given hull.
 - Debug key moves: CRT toggle C -> F7, aberration G -> F8 (C is strafe now).
+
+## M2 — roster and hangar
+- Seven new hulls (Needle, Anvil, Sextant, Mule, Shade, Magpie, Hive) drawn by the same SDF + glyph-matcher pipeline, each with live state: Anvil per-barrel muzzle flash, Sextant sensor petals, Mule visible containers = hold fill, Shade fades out running dark, Magpie grabber arm reaches for pickups, Hive bays iris open. Wren redrawn as an original design (the old art was a recognisable copy of an existing starfighter); its flight model is unchanged.
+- New mechanics on every ship: shields (regen + delay, knocked out by ion storms), flat armour, kinetic/thermal/EM resists and typed damage, weapon energy, heat with overheat lockout, live signature that scales enemy notice range, mass-scaled ramming and knockback, turret hardpoints, multi-barrel fire. Quirks are numeric ShipDef fields (ramMult, cargoSoak, darkSig, wingmen, nebulaScan).
+- Hive wingmen (`Kind.Wing`): friendly drones that orbit, dive and shoot; never targeted by the player, missiles or aim assist.
+- Hangar (title menu): pick/unlock hulls, rating bars, derived readouts, rotating preview, best score per ship. Unlocks come from lifetime play stats plus scrap (`src/sim/unlocks.ts`); Hive is late.
+- Save format v2 with a v1 migration (upgrades and best score move to the Wren slot). Per-ship modules and best scores, lifetime stats, options for verticality and the news ticker.
+- Menus are item lists; new key defaults: climb R, dive G, scan Q, cruise Y. Debug: auto-quality Q -> F9. `?state=hangar`, `?unlockall=1`, `?roster=1`.
+- Wren regression trace deliberately re-baselined (Wren gained shields, energy, heat, signature).

@@ -39,7 +39,7 @@ export class GlowBatch {
 
 export const SPRITE_STRIDE = 12;     // x,y,angle,size | type,seed,flash,aux | bound,0,0,0
 export const MAX_SPRITES = 1600;
-export const enum Spr { Player = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine = 4, Asteroid = 5, Bolt = 6, EBolt = 7, Station = 8, Boss = 9, Sniper = 10, Splitter = 11, Rammer = 12, Tender = 13 }
+export const enum Spr { Player = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine = 4, Asteroid = 5, Bolt = 6, EBolt = 7, Station = 8, Boss = 9, Sniper = 10, Splitter = 11, Rammer = 12, Tender = 13, Needle = 14, Anvil = 15, Sextant = 16, Mule = 17, Shade = 18, Magpie = 19, Hive = 20, Wing = 21 }
 
 export class SpriteBatch {
   readonly data = new Float32Array(MAX_SPRITES * SPRITE_STRIDE);

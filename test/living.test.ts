@@ -44,7 +44,7 @@ describe('sector events', () => {
     const { s } = quiet();
     s.triggerEvent(1); run(s, 60 * 6);
     const c = find(s, Kind.Comet);
-    s.hp = 100; s.sx = s.spx = s.ex[c]; s.sy = s.spy = s.ey[c];
+    s.hp = 100; s.shield = 0; s.sx = s.spx = s.ex[c]; s.sy = s.spy = s.ey[c];
     run(s, 30);
     expect(100 - s.hp).toBeGreaterThan(20); expect(100 - s.hp).toBeLessThan(30);
     const d = s.spawnEnt(Kind.Drone, s.ex[c], s.ey[c], 0, 0); const b = s.spawnEnt(Kind.Boss, s.ex[c], s.ey[c], 0, 0);

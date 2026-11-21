@@ -46,7 +46,7 @@ describe('new enemies and weapons', () => {
 
   it('rammers explode on contact and hurt the ship', () => {
     const s = new Sim(25);
-    s.invuln = 0;
+    s.invuln = 0; s.shield = 0;
     const e = s.spawnEnt(Kind.Rammer, s.sx + 4, s.sy, 0, 0);
     const hp = s.hp;
     s.step();

@@ -4,9 +4,11 @@ import { In, Sim } from '../src/sim/sim';
 
 /**
  * Wren regression: the ShipDef refactor must leave the original ship's handling bit-for-bit identical.
- * The fixture was recorded from the pre-refactor sim (commit 'M1: record pre-refactor Wren flight trace fixture').
+ * M1 proved the ShipDef refactor bit-identical against a trace recorded from the pre-refactor sim (commit 4098ecb).
+ * M2 deliberately re-baselined it after Wren gained shields, energy, heat and signature; from then on it guards against
+ * unintended handling changes. Regenerate only on purpose: `VITE_DUMP_TRACE=1 npx vitest run test/wren.test.ts -t dump --reporter=verbose`, paste the TRACE line into the fixture.
  */
-function trace(): number[][] {
+export function trace(): number[][] {
   const out: number[][] = [];
   const cases = [
     { seed: 11, up: [0, 0, 0, 0, 0, 0, 0], assist: true, aim: 0, aimAssist: 2 },
@@ -37,6 +39,8 @@ describe('Wren regression', () => {
     expect(t.length).toBe(ref.length);
     for (let i = 0; i < t.length; i++) expect(t[i]).toEqual(ref[i]);
   }, 60000);
+
+  it.runIf(!!(import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_DUMP_TRACE)('dump', () => { console.log('TRACE' + JSON.stringify(trace())); });
 
   it('trace exercises every input', () => { expect(In.Missile | In.Thrust | In.Left | In.Right | In.Brake | In.Fire | In.Boost | In.Dodge).toBe(255); });
 });
