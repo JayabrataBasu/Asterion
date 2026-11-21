@@ -102,3 +102,9 @@
 - Removed the allegiance rim ring around ships; quiet zone is softer (backdrop never below 35%); original glyph ramp restored so the sun bloom is back.
 - Per-sector sky: palette hue, cloud scale, star density, filament strength; stellar-class star colours, clustered stars, far colour wash layer.
 - New silhouettes for Needle, Anvil, Sextant, Mule, Shade, Magpie, Hive and every enemy (drone, gunship, minelayer, dreadnought, sniper, splitter, rammer, tender). Wren unchanged. Hostile hulls lean red.
+
+## v4.0-alpha.3
+- Combat FX: glyph tails on player bolts, enemy bolts are `o`, sparks cool through `* + ' ,`, glyph explosions (`@ # % * : .`), shield-hit `( )` arcs at the impact angle.
+- Planets: terminator band, night-side city lights, latitude-shaped gas bands, `( )` atmosphere rim on the lit limb.
+- Hyperspace: entry flash, slight hull stretch, tunnel tinted by the sector palette.
+- HUD: larger cells at 1440p+, low-hull warning is a pulsing ring around the ship instead of a full-screen tint. Player hull drawn slightly larger; hangar preview larger and slower.

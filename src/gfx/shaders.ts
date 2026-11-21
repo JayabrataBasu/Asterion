@@ -56,6 +56,8 @@ const vec3 L = vec3(0.568, 0.5165, 0.640);
 #define G_AT uG[14]
 #define G_PLUS uG[15]
 #define G_O uG[16]
+#define G_LP uG[17]
+#define G_RP uG[18]
 
 vec3 hueRgb(float h){ return clamp(abs(fract(h + vec3(0.0, 0.6667, 0.3333)) * 6.0 - 3.0) - 1.0, 0.0, 1.0); }
 vec3 nebLayer(vec2 pl, float seed){
@@ -194,8 +196,9 @@ vec3 atmoColor(int type){
 float matGlyph(int type, vec3 n, vec3 c, float lum, vec2 cell){
   float flow = uTime * 0.5;
   if (type == 1) {                                                    // gas giants flow in ~ - =
-    float k = fract(n.y * 4.5 + 0.12 * sin(n.x * 5.0 + flow) + flow * 0.05);
-    return k < 0.34 ? G_TILDE : k < 0.67 ? G_DASH : G_EQ;
+    float lat = abs(n.y);                                              // fewer, wider bands: ~ at the equator, - toward the poles, drifting slowly
+    float k = fract(n.y * 2.2 + 0.08 * sin(n.x * 3.0 + flow) + flow * 0.02);
+    return lat < 0.32 ? G_TILDE : lat > 0.72 ? G_DASH : (k < 0.5 ? G_TILDE : G_DASH);
   }
   if (type == 2 || min(c.r, min(c.g, c.b)) > 0.72) return lum > 0.55 ? G_STAR : lum > 0.25 ? G_TICK : G_DOT;   // ice . * '
   if (c.b > c.r * 1.25 && c.b > c.g) return fract(cell.x * 0.37 + cell.y * 0.21 + flow * 0.3) < 0.5 ? G_TILDE : G_DASH;   // oceans ripple
@@ -273,7 +276,7 @@ void main(){
       if (ph < len && r > 6.0) {
         float k = ph / len;                                               // 0 tail .. 1 head (outer end)
         float br = uHyper.z * (0.15 + 0.8 * k * k) * smoothstep(8.0, 40.0, r);
-        rgb = rgb * (1.0 - 0.35 * uHyper.z) + mix(vec3(0.35, 0.55, 1.2), vec3(1.2, 1.3, 1.6), k) * br;
+        rgb = rgb * (1.0 - 0.35 * uHyper.z) + mix(mix(vec3(0.35, 0.55, 1.2), hueRgb(uStyle.x - 0.23) * 1.3 + 0.2, 0.5), vec3(1.2, 1.3, 1.6), k) * br;   // tunnel takes the sector's palette
         float a = mod(ang + 3.14159265, 3.14159265);
         glyph = (a < 0.3927 || a > 2.7489) ? G_DASH : a < 1.1781 ? G_SL : a < 1.9635 ? G_BAR : G_BS;
       }
@@ -375,6 +378,11 @@ void main(){
       float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
       rgb = col * resolve;
       glyph = resolve > 0.5 && lum > 0.05 ? matGlyph(type, n, sc, lum, cell) : 0.0;   // night side falls back to the plain ramp
+      if (resolve > 0.5 && cov == 4) {
+        float term = 1.0 - smoothstep(0.0, 0.12, abs(ndl));         // terminator: a soft band of : at the day / night edge
+        if (term > 0.5) { glyph = G_COLON; rgb += ac * 0.08 * term; }
+        if (type == 0 && emis.r > 0.4 && ndl < 0.0) glyph = G_DOT;   // city lights on the night side
+      }
       if (C.y > 0.0) glyph = 0.0;                                   // scan view rewrites this body as data strings (glyph pass)
       if (cov < 4 && resolve > 0.5) {                               // limb cell -> directional glyph
         vec2 nn = normalize(d + 1e-4);
@@ -388,6 +396,7 @@ void main(){
       float a = f * (0.10 + 0.85 * sunSide) * 0.85 * (0.3 + 0.7 * detail);
       rgb += ac * a;
       if (a > 0.32 && resolve > 0.5) glyph = a > 0.55 ? G_SEMI : a > 0.42 ? G_COLON : G_COMMA;   // atmosphere: the light family
+      if (sunSide > 0.55 && dist < R + 1.6 && resolve > 0.5 && abs(d.x) > 0.25 * R) glyph = d.x < 0.0 ? G_LP : G_RP;   // lit limb: a coloured ( ) rim
       if (ecl > 0.0) {                                              // eclipse: corona ring around the occluding body
         float cor = exp(-(dist - R) / 2.0) * ecl * uSun;
         rgb += vec3(1.0, 0.9, 0.72) * uSunTint * cor * 2.4;

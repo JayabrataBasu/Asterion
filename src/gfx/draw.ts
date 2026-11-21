@@ -15,10 +15,11 @@ const G = {
   dot: gi('·'), dotA: gi('.'), colon: gi(':'), plus: gi('+'), star: gi('*'), eq: gi('='), hash: gi('#'), at: gi('@'),
   pct: gi('%'), amp: gi('&'), x: gi('x'), tri: gi('▲'), ring: gi('○'), disc: gi('●'), dia: gi('◆'), full: gi('█'), light: gi('░'),
   tl: gi('╔'), tr: gi('╗'), bl: gi('╚'), br: gi('╝'), h2: gi('═'), v2: gi('║'), pipe: gi('|'), dash: gi('-'), sl: gi('/'), bs: gi('\\'),
-  lb: gi('['), rb: gi(']'), o: gi('o'), bul: gi('•'),
+  lb: gi('['), rb: gi(']'), o: gi('o'), bul: gi('•'), tick: gi("'"), comma: gi(','), lp: gi('('), rp: gi(')'),
 };
 const LINE8 = [G.dash, G.sl, G.pipe, G.bs, G.dash, G.sl, G.pipe, G.bs];
 const DEBRIS = [G.pct, G.amp, G.hash, G.eq, G.x];
+const EXPL = [G.at, G.hash, G.pct, G.star, G.colon, G.dotA];
 const FIRE_G = [G.dotA, G.colon, G.star, G.hash, G.at];
 
 // HDR palette per Col index
@@ -64,6 +65,8 @@ export class FrameBuilder {
   /** Notable events of the run (game-over summary), shared with the exploration layer. */
   notable: string[] = [];
   private cols = 0; private rows = 0; private asp = 2;
+  /** Boost amount 0..1 (set by main): stretches the player hull slightly along its heading. */
+  hyper = 0;
   private thrS = 0.25;
   /** Ships drawn this frame (x, y, heading, hull radius, allegiance, band dim) for quiet zones and nav lights. */
   private readonly lt = new Float32Array(16 * 6); private nl = 0;
@@ -152,6 +155,7 @@ export class FrameBuilder {
     this.scanView();
     this.pois(time);
     this.marks(time);
+    this.shieldArc(); this.lowHull(time);
     this.scraps(time);
     this.lifeEnts(time);
     this.discoveries(time);
@@ -252,8 +256,8 @@ export class FrameBuilder {
       const target = s.thrusting ? (s.boosting ? 1.35 : 0.9) : 0.25;   // idle pilot light: the engine is never fully dark
       this.thrS += (target - this.thrS) * 0.22;
       const S = s.ship, rk = S.radius / 2.4 * SK;
-      sp.add(x, y, a, SK * S.artSize, S.art, this.hullState() + 2 * ((s.up[6] > 0 ? 1 : 0) | (s.up[8] >= 2 ? 2 : 0) | (s.up[1] >= 3 ? 4 : 0)), s.hitFlash * 0.8, this.thrS, 0.72, this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
-      if (S.darkSig >= 1 || this.dark < 0.5) { gl.add(x, y, 9, 0.16, 0.18, 0.24); this.ship(x, y, a, SK * S.artSize, 0.72, 0); }
+      sp.add(x, y, a, SK * S.artSize, S.art, this.hullState() + 2 * ((s.up[6] > 0 ? 1 : 0) | (s.up[8] >= 2 ? 2 : 0) | (s.up[1] >= 3 ? 4 : 0)), s.hitFlash * 0.8, this.thrS, 0.8 * (1 + 0.12 * this.hyper), this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
+      if (S.darkSig >= 1 || this.dark < 0.5) { gl.add(x, y, 9, 0.16, 0.18, 0.24); this.ship(x, y, a, SK * S.artSize, 0.8, 0); }
       if (s.thrusting) {
         const ca = Math.cos(a), sa = Math.sin(a);
         const rad = (s.boosting ? 8 : 5.5) * (S.darkSig < 1 ? 0.6 : 1);
@@ -283,6 +287,9 @@ export class FrameBuilder {
       this.zE(s.bz[i]); const x = s.bx[i] - s.bvx[i] * back, y = s.by[i] - s.bvy[i] * back + this.zoff, k = this.bandF;
       if (!this.visible(x, y, 8)) continue;
       const a = Math.atan2(s.bvy[i], s.bvx[i]);
+      { const ca = Math.cos(a), sa = Math.sin(a), bt = this.r.glyphs;     // glyph tail along the velocity; enemy bolts are an o, not a dash
+        if (s.bown[i] === 0) { const lg = LINE8[dir8(Math.atan2(sa / this.asp, ca))]; for (let j = 1; j <= 3; j++) bt.put(this.cx(x - ca * 2.5 * j), this.cy(y - sa * 2.5 * j), lg, (cbk ? 0.2 : 1.7) * k / j, (cbk ? 0.7 : 0.3) * k / j, (cbk ? 1.7 : 0.2) * k / j, 2); }
+        else bt.put(this.cx(x), this.cy(y), G.o, (cbk ? 2.0 : 0.3) * k, (cbk ? 1.4 : 1.9) * k, (cbk ? 0.2 : 0.4) * k, 2); }
       if (s.bown[i] === 0) { sp.add(x, y, a, 6, Spr.Bolt, 0, 0, cbk, 1); if (cbk) gl.add(x, y, 7, 0.1 * k, 0.4 * k, 1.2 * k); else gl.add(x, y, 7, 1.2 * k, 0.15 * k, 0.1 * k); gl.add(x - s.bvx[i] * 0.035, y - s.bvy[i] * 0.035, 5, (cbk ? 0.05 : 0.6) * k, (cbk ? 0.2 : 0.08) * k, (cbk ? 0.6 : 0.05) * k); }
       else { sp.add(x, y, a, 5, Spr.EBolt, 0, 0, cbk, 1); if (cbk) gl.add(x, y, 6.5, 1.1 * k, 0.6 * k, 0.08 * k); else gl.add(x, y, 6.5, 0.15 * k, 1.0 * k, 0.25 * k); }
     }
@@ -544,7 +551,7 @@ export class FrameBuilder {
       const pr = PAL[c], pg = PAL[c + 1], pb = PAL[c + 2];
       switch (kind) {
         case PK.Spark: {
-          const g = t > 0.6 ? G.star : t > 0.3 ? G.plus : G.dotA;
+          const g = t > 0.7 ? G.star : t > 0.45 ? G.plus : t > 0.25 ? G.tick : G.comma;
           const k = 0.35 + t * 1.3, w = t > 0.7 ? 0.5 : 0;
           b.put(cx, cy, g, (pr + w) * k, (pg + w) * k, (pb + w) * k, 0);
           if ((i & 1) === 0) gl.add(x, y, 2.4, pr * t * 0.30, pg * t * 0.30, pb * t * 0.30);
@@ -630,6 +637,9 @@ export class FrameBuilder {
       if (s.rlife[i] <= 0) continue;
       const t = s.rlife[i] / 0.5, rad = s.rrad[i], c = s.rcol[i] * 3;
       this.r.glows.add(s.rx[i], s.ry[i], rad * 1.8 + 6, PAL[c] * 0.32 * t * t, PAL[c + 1] * 0.32 * t * t, PAL[c + 2] * 0.32 * t * t);   // explosion light pulse: feeds bloom
+      { const seq = EXPL, gq = Math.min(5, Math.floor((1 - t) * 6)), ex = this.cx(s.rx[i]), ey = this.cy(s.ry[i]), kk = 0.5 + t * 1.4;   // @ # % * : . as the blast cools
+        b.put(ex, ey, seq[gq], PAL[c] * kk + 0.4 * t, PAL[c + 1] * kk + 0.3 * t, PAL[c + 2] * kk + 0.2 * t, 2);
+        if (rad > 2.5) { const g2 = seq[Math.min(5, gq + 1)]; b.put(ex + 1, ey, g2, PAL[c] * kk, PAL[c + 1] * kk, PAL[c + 2] * kk, 2); b.put(ex - 1, ey, g2, PAL[c] * kk, PAL[c + 1] * kk, PAL[c + 2] * kk, 2); b.put(ex, ey + 1, g2, PAL[c] * kk, PAL[c + 1] * kk, PAL[c + 2] * kk, 2); b.put(ex, ey - 1, g2, PAL[c] * kk, PAL[c + 1] * kk, PAL[c + 2] * kk, 2); } }
       const n = Math.min(110, Math.floor(rad * 5) + 8), k = 0.25 + t * 1.1;
       for (let j = 0; j < n; j++) {
         const a = (j / n) * TAU;
@@ -741,6 +751,26 @@ export class FrameBuilder {
     bt.text('D R E A D N O U G H T', (this.cols - 21) >> 1, 1, 1.6 * p, 0.35, 0.25);
     bt.put(x0 - 1, cy, G.lb, 0.8, 0.3, 0.3, 1); bt.put(x0 + w, cy, G.rb, 0.8, 0.3, 0.3, 1);
     for (let i = 0; i < w; i++) bt.put(x0 + i, cy, i < n ? G.full : G.light, i < n ? 1.5 : 0.2, i < n ? 0.3 : 0.1, i < n ? 0.25 : 0.1, 1);
+  }
+
+  /** Low hull: a red ring of glyphs pulses around the ship instead of tinting the whole screen. */
+  private lowHull(time: number): void {
+    const s = this.sim; if (!s.alive || s.hp >= 30) return;
+    const p = 0.5 + 0.5 * Math.sin(time * 5), R = s.ship.artSize * SK * 0.8 * 0.5 * 1.35, px = s.spx + (s.sx - s.spx) * this.alpha, py = s.spy + (s.sy - s.spy) * this.alpha + this.zy(this.pz);
+    for (let j = 0; j < 12; j++) {
+      const a = (j / 12) * TAU, ca = Math.cos(a), g = Math.abs(ca) > 0.6 ? (ca < 0 ? G.lp : G.rp) : G.dash;
+      this.r.glyphs.put(this.cx(px + ca * R), this.cy(py + Math.sin(a) * R), g, 1.9 * (0.3 + 0.7 * p), 0.2, 0.18, 2);
+    }
+  }
+
+  /** Shield hit: an arc of ( ) glyphs hugging the hull at the impact angle, fading over ~0.3 s. */
+  private shieldArc(): void {
+    const s = this.sim; if (s.hitT <= 0.6 || !s.alive || s.shield <= 0) return;
+    const k = (s.hitT - 0.6) / 0.4, R = s.ship.artSize * SK * 0.8 * 0.5 * 1.15, px = s.spx + (s.sx - s.spx) * this.alpha, py = s.spy + (s.sy - s.spy) * this.alpha;
+    for (let j = -3; j <= 3; j++) {
+      const a = s.hitAng + j * 0.18, ca = Math.cos(a), g = Math.abs(ca) > 0.55 ? (ca < 0 ? G.lp : G.rp) : G.dash, f = k * (1 - Math.abs(j) / 4);
+      this.r.glyphs.put(this.cx(px + ca * R), this.cy(py + Math.sin(a) * R + this.zy(this.pz)), g, 0.3 * f * 2, 1.4 * f * 2, 1.9 * f * 2, 2);
+    }
   }
 
   /** Directional damage arc: bright glyphs on an ellipse around the ship toward whatever hit you. */

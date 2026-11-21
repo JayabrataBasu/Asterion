@@ -471,7 +471,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     spec = 0.35;
   } else if (ty == 18) {               // shade: near-black violet with faint edge light
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(0.85, 0.62, 1.3) : vec3(0.62, 0.42, 1.0);
+    col = m == dp.x ? vec3(1.0, 0.76, 1.5) : vec3(0.78, 0.54, 1.2);
     emis += smoothstep(0.5, 0.0, abs(dp.y + 0.3)) * vec3(1.0, 0.35, 1.2) * 0.8;
     emis += smoothstep(0.8, 0.0, length((q - vec2(-2.8, 1.2)) / vec2(0.7, 0.9))) * vec3(0.7, 0.4, 1.4) * (0.2 + thr);
     spec = 0.9;

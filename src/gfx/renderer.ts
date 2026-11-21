@@ -18,7 +18,7 @@ export interface FrameParams {
   reveal?: number; scanPlanet?: number; layers?: boolean;
 }
 /** Scene glyph table (index order must match the G_* defines in FS_SCENE). */
-const GLYPHS = ['-', '/', '|', String.fromCharCode(92), '.', ',', ':', ';', '~', '=', '#', '%', '*', "'", '@', '+', 'o'];
+const GLYPHS = ['-', '/', '|', String.fromCharCode(92), '.', ',', ':', ';', '~', '=', '#', '%', '*', "'", '@', '+', 'o', '(', ')'];
 
 const BLOOM_LEVELS = 5;
 const ZERO4 = new Float32Array(4);
@@ -183,7 +183,7 @@ export class Renderer {
   resize(cssW: number, cssH: number, dpr: number): void {
     
     this.dpr = dpr;
-    this.cwPx = Math.max(3, Math.round(settings.cellCss * dpr));
+    this.cwPx = Math.max(3, Math.round(settings.cellCss * (cssH >= 1300 ? 1.25 : 1) * dpr));   // 1440p+: bigger cells keep the HUD readable
     this.chPx = this.cwPx * 2; this.aspect = 2;
     this.W = Math.max(1, Math.round(cssW * dpr)); this.H = Math.max(1, Math.round(cssH * dpr));
     this.canvas.width = this.W; this.canvas.height = this.H;
