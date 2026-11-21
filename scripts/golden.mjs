@@ -5,6 +5,7 @@
 //   node scripts/golden.mjs shots <dir>     save full-size screenshots of every scene (for docs / before-after)
 //   node scripts/golden.mjs url '<query>' <file.png>   one ad-hoc screenshot
 //   node scripts/golden.mjs console '<query>'          print browser console errors / logs for a scene
+//   node scripts/golden.mjs contrast       hull-vs-surround luminance test: every hull x nebula theme, idle (fails below 3:1)
 //   GOLDEN_ONLY=a,b limits the scenes; CHROME=<path> picks the browser.
 // No dependencies: PNG decode/encode uses node:zlib. Baselines are per-machine regression guards (software GL), not cross-GPU truth.
 import { spawn, spawnSync } from 'node:child_process';
@@ -93,6 +94,38 @@ function rmse(a, b) {
   return Math.sqrt(s / a.rgb.length);
 }
 
+// ---------------------------------------------------------------- contrast test
+const HULLS = ['wren', 'needle', 'anvil', 'sextant', 'mule', 'shade', 'magpie', 'hive'];
+const CONTEXTS = { home: 'seed=7&x=0&y=0', gas: 'seed=1&x=560&y=-53' };
+const lin = v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+/** Contrast of the brighter half of the hull cells (edge cells are mostly empty) against the ring 2-4 cells out. Hull cells come from the ?layers=1 debug shot (ship cells are red). */
+export function hullContrast(normal, layers, cw = 8, ch = 16) {
+  const cols = Math.floor(layers.w / cw), rows = Math.floor(layers.h / ch), mask = new Uint8Array(cols * rows), lum = new Float32Array(cols * rows);
+  for (let cy = 0; cy < rows; cy++) for (let cx = 0; cx < cols; cx++) {
+    let red = 0, l = 0;
+    for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) {
+      const i = ((cy * ch + y) * layers.w + cx * cw + x) * 3, j = ((cy * ch + y) * normal.w + cx * cw + x) * 3;
+      if (layers.rgb[i] > 60 && layers.rgb[i] > 2 * layers.rgb[i + 1] && layers.rgb[i] > 2 * layers.rgb[i + 2]) red++;
+      l += 0.2126 * lin(normal.rgb[j]) + 0.7152 * lin(normal.rgb[j + 1]) + 0.0722 * lin(normal.rgb[j + 2]);
+    }
+    mask[cy * cols + cx] = red > 6 ? 1 : 0; lum[cy * cols + cx] = l / (cw * ch);
+  }
+  // the ship is the mask component nearest the screen centre (asteroids etc. are ignored)
+  let best = -1, bd = 1e9;
+  for (let i = 0; i < mask.length; i++) if (mask[i]) { const d = Math.hypot(i % cols - cols / 2, Math.floor(i / cols) - rows / 2); if (d < bd) { bd = d; best = i; } }
+  if (best < 0) return null;
+  const comp = new Uint8Array(mask.length), st = [best]; comp[best] = 1;
+  while (st.length) { const i = st.pop(), x = i % cols, y = (i / cols) | 0; for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue; const k = ny * cols + nx; if (mask[k] && !comp[k]) { comp[k] = 1; st.push(k); } } }
+  const hl = []; let rs = 0, rn = 0;
+  for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) {
+    if (comp[y * cols + x]) { hl.push(lum[y * cols + x]); continue; }
+    let dmin = 99; for (let yy = Math.max(0, y - 4); yy <= Math.min(rows - 1, y + 4); yy++) for (let xx = Math.max(0, x - 4); xx <= Math.min(cols - 1, x + 4); xx++) if (comp[yy * cols + xx]) dmin = Math.min(dmin, Math.max(Math.abs(xx - x), Math.abs(yy - y)));
+    if (dmin >= 2 && dmin <= 4) { rs += lum[y * cols + x]; rn++; }
+  }
+  hl.sort((a, b) => b - a); const top = hl.slice(0, Math.max(1, hl.length >> 1)), hn = hl.length, lh = top.reduce((a, b) => a + b, 0) / top.length + 0.05, lr = rs / Math.max(1, rn) + 0.05;
+  return { ratio: Math.max(lh, lr) / Math.min(lh, lr), hull: hn, ring: rn };
+}
+
 // ---------------------------------------------------------------- run
 async function main() {
   const tmp = mkdtempSync(join(tmpdir(), 'golden-'));
@@ -104,6 +137,17 @@ async function main() {
     const shotDir = MODE === 'shots' ? (process.argv[3] ?? join(root, 'docs', 'screens')) : null;
     if (shotDir) mkdirSync(shotDir, { recursive: true });
     let fail = 0;
+    if (MODE === 'contrast') {
+      const MIN = parseFloat(process.env.CONTRAST_MIN ?? '3'), ctxs = (process.env.CONTRAST_CTX ?? 'home').split(','), themes = (process.env.CONTRAST_THEMES ?? '0,1,2,3,4,5').split(',');
+      const shot = (q, f) => { spawnSync(chrome, ['--headless=new', '--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist', '--hide-scrollbars', `--user-data-dir=${join(tmp, 'prof')}`, '--window-size=1600,900', '--virtual-time-budget=3000', `--screenshot=${f}`, `http://localhost:${PORT}/?${q}`], { timeout: 120000, stdio: 'ignore' }); return decodePng(readFileSync(f)); };
+      for (const cx of ctxs) for (const hull of (only ?? HULLS)) for (const th of themes) {
+        const q = `${CONTEXTS[cx]}&ff=0.02&hud=0&idle=1&ship=${hull}&theme=${th}&bloom=0&chroma=0&scan=0&grain=0&vig=0`;
+        const r = hullContrast(shot(q, join(tmp, 'n.png')), shot(q + '&layers=1', join(tmp, 'l.png')));
+        const ok = r && r.ratio >= MIN; if (!ok) fail = 1;
+        console.log(`${ok ? 'ok  ' : 'FAIL'}  ${cx}/${hull}/theme${th}  ${r ? `contrast ${r.ratio.toFixed(1)}:1 (hull ${r.hull} cells, ring ${r.ring})` : 'ship not found'}`);
+      }
+      return fail;
+    }
     const list = MODE === 'url' || MODE === 'console' || MODE === 'perf' ? [['adhoc', process.argv[3]]] : Object.entries(SCENES);
     for (const [name, q] of list) {
       if (only && !only.includes(name)) continue;

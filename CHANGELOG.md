@@ -89,3 +89,10 @@
 - Glyph cells (stars, planet materials, streaks) borrow the surrounding backdrop instead of drawing black boxes; planet night sides fall back to the plain ramp instead of a field of material glyphs.
 - All ships unlocked from the start; unlock goals remain as achievements in the hangar.
 - Debug `?boost=1` holds boost.
+
+## v4.0-alpha (visual overhaul, phases A, C, H1-H2)
+- Backdrop ramp is light glyphs only; hull fill is structural glyphs only (no shared vocabulary).
+- Quiet zone: backdrop fades to black around every ship; allegiance-tinted rim (hostile rim dotted); diagonal dark ring.
+- Always-on wingtip lights, strobe, idle engine pilot light; planet-shadow floor raised to 45%.
+- Anvil recoloured steel-blue with yellow hazard stripes; hostile hulls slightly desaturated.
+- `node scripts/golden.mjs contrast`: hull-vs-surround test (8 hulls x 6 themes, fails below 3:1). Debug params `?theme=0..5`, `?idle=1`.

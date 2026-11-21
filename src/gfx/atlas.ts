@@ -27,7 +27,7 @@ export interface AtlasInfo {
 
 /** Glyphs the sprite matcher may choose from (structural ASCII; letters excluded on purpose). */
 export const MATCH_CHARS = ".,'`:;!|/\\()[]{}<>-_=+*^#";   // shape glyphs only: @ & $ % read as noise on hull edges
-export const FILL_CHARS = ".:-=+*##";
+export const FILL_CHARS = "--==+*##";   // structural only: the backdrop ramp never uses - = + * #
 export const MATCH_IDX = new Int32Array(48);
 export let MATCH_N = 0;
 { const seen = new Set<number>(); for (const c of MATCH_CHARS) { const i = CODE2IDX[c.charCodeAt(0)]; if (i && !seen.has(i) && MATCH_N < 48) { seen.add(i); MATCH_IDX[MATCH_N++] = i; } } }
@@ -87,7 +87,7 @@ export function buildAtlas(cw: number, ch: number, weight = 600): AtlasInfo {
 
 /** Ramp definitions: candidate chars are density-sorted at runtime so the ramp is monotonic for this font. */
 export const RAMPS: { name: string; chars: string; levels: number }[] = [
-  { name: 'classic', chars: ' .:-=+*#%@', levels: 10 },
+  { name: 'classic', chars: ` .,'\`:;~"`, levels: 9 },   // light glyphs only; brightness comes from colour and the cell tint, not glyph weight
   { name: 'dense',  chars: ' .,:;-~=+*xX#%&@', levels: 14 },
   { name: 'dots',   chars: ' ·∙:•○●◉', levels: 8 },
   { name: 'blocks', chars: ' ░▒▓█', levels: 5 },

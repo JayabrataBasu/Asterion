@@ -64,7 +64,17 @@ export class FrameBuilder {
   /** Notable events of the run (game-over summary), shared with the exploration layer. */
   notable: string[] = [];
   private cols = 0; private rows = 0; private asp = 2;
-  private thrS = 0.1;
+  private thrS = 0.25;
+  /** Ships drawn this frame (x, y, heading, hull radius, allegiance, band dim) for quiet zones and nav lights. */
+  private readonly lt = new Float32Array(16 * 6); private nl = 0;
+  /** Register a ship for the quiet zone and always-on lights. al: 0 player, 1 hostile, 2 neutral. */
+  private ship(x: number, y: number, a: number, size: number, scale: number, al: number): void {
+    const R = size * scale * 0.5;
+    this.r.quiet(this.cx(x), this.cy(y), R, al);
+    if (this.nl >= 16) return;
+    const o = this.nl++ * 6, t = this.lt;
+    t[o] = x; t[o + 1] = y; t[o + 2] = a; t[o + 3] = R; t[o + 4] = al; t[o + 5] = this.bandF;
+  }
   private hudT = -9; private sStat1 = ''; private sStat2 = ''; private sScore = ''; private sKills = '';
   // radar frame
   private rdX0 = 0; private rdTop = 0; private rdSx = 0; private rdMx = 0; private rdMy = 0; private rdW = 0; private rdH = 0;
@@ -116,7 +126,7 @@ export class FrameBuilder {
       const t = dx * 0.568 + dy * 0.5165;
       if (t > 0 || t < -R * 9) continue;
       const perp = Math.abs(dx * 0.5165 - dy * 0.568) / 0.768;
-      const sh = 1 - 0.75 * Math.min(1, Math.max(0, (R * 1.05 - perp) / (R * 0.35)));
+      const sh = 1 - 0.55 * Math.min(1, Math.max(0, (R * 1.05 - perp) / (R * 0.35)));
       if (sh < f) f = sh;
     }
     return f * this.bandF;
@@ -131,6 +141,7 @@ export class FrameBuilder {
     this.camX = camX; this.camY = camY; this.alpha = alpha;
     this.cols = r.cols; this.rows = r.rows; this.asp = r.aspect;
     this.pz = this.sim.spz + (this.sim.sz - this.sim.spz) * alpha;
+    this.nl = 0;
     this.shadows();
     this.sprites(time);
     if (this.sim.vert) this.r.sprites.sortByZ();
@@ -179,7 +190,7 @@ export class FrameBuilder {
       this.zE(s.ez[i]); const x = s.ex[i], y = s.ey[i] + this.zoff;
       if (this.visible(x, y, 22)) {
         const f = s.eflash[i] > 0 ? s.eflash[i] * 0.7 : 0;
-        sp.add(x, y, s.ea[i], SK * 22, Spr.Tender, s.eseed[i], f, 0.5, 0.95, this.shade(x, y));
+        sp.add(x, y, s.ea[i], SK * 22, Spr.Tender, s.eseed[i], f, 0.5, 0.95, this.shade(x, y)); this.ship(x, y, s.ea[i], SK * 22, 0.95, 2);
         gl.add(x, y, 14, 0.05, 0.3, 0.45);
         const ex = x - Math.cos(s.ea[i]) * 6, ey = y - Math.sin(s.ea[i]) * 6;
         gl.add(ex, ey, 6, 0.3, 0.6, 1.0);
@@ -194,41 +205,41 @@ export class FrameBuilder {
       const sp2 = Math.sqrt(s.evx[i] * s.evx[i] + s.evy[i] * s.evy[i]);
       const thr = Math.min(1, sp2 / (k === Kind.Drone ? 64 : k === Kind.Gunship ? 42 : 34)) * 0.8 + 0.1;
       if (k === Kind.Drone) {
-        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 10, Spr.Drone, s.eseed[i], f, thr, 0.72, this.shade(x, y)); gl.add(x, y, 6, 0.32, 0.05, 0.05); }
+        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 10, Spr.Drone, s.eseed[i], f, thr, 0.72, this.shade(x, y)); this.ship(x, y, a, SK * 10, 0.72, 1); gl.add(x, y, 6, 0.32, 0.05, 0.05); }
       } else if (k === Kind.Gunship) {
         if (this.visible(x, y, 25)) {
-          sp.add(x, y, a, SK * 17, Spr.Gunship, s.eseed[i], f, thr * (s.es[i] === 2 && s.eaux[i] > 0 ? 1 : 0.9), 0.65, this.shade(x, y));
+          sp.add(x, y, a, SK * 17, Spr.Gunship, s.eseed[i], f, thr * (s.es[i] === 2 && s.eaux[i] > 0 ? 1 : 0.9), 0.65, this.shade(x, y)); this.ship(x, y, a, SK * 17, 0.65, 1);
           gl.add(x, y, 8, 0.30, 0.16, 0.04);
           if (s.eshield[i] > 0) gl.add(x, y, 15, 0.05, 0.25 * Math.min(1, s.eshield[i] / 4), 0.6 * Math.min(1, s.eshield[i] / 4));
           if (ch > 0) gl.add(x + Math.cos(a) * 9, y + Math.sin(a) * 9, 3 + ch * 6, 0.2 + ch * 0.8, 0.1 + ch * 0.5, 0.02);
         }
       } else if (k === Kind.Boss) {
         if (this.visible(x, y, 34)) {
-          sp.add(x, y, a, SK * 32, Spr.Boss, s.eseed[i], f, 0.5 + 0.5 * thr, 0.8, this.shade(x, y));
+          sp.add(x, y, a, SK * 32, Spr.Boss, s.eseed[i], f, 0.5 + 0.5 * thr, 0.8, this.shade(x, y)); this.ship(x, y, a, SK * 32, 0.8, 1);
           gl.add(x, y, 22, 0.3, 0.08, 0.04);
           gl.add(x - Math.cos(a) * 19, y - Math.sin(a) * 19, 9, 0.9, 0.35, 0.1);
         }
       } else if (k === Kind.Sniper) {
         if (this.visible(x, y, 18)) {
-          sp.add(x, y, a, SK * 17, Spr.Sniper, s.eseed[i], f, thr, 0.62, this.shade(x, y));
+          sp.add(x, y, a, SK * 17, Spr.Sniper, s.eseed[i], f, thr, 0.62, this.shade(x, y)); this.ship(x, y, a, SK * 17, 0.62, 1);
           gl.add(x, y, 6, 0.08, 0.2, 0.32);
           if (ch > 0) gl.add(x + Math.cos(a) * 10, y + Math.sin(a) * 10, 3 + ch * 7, 0.6 * ch, 0.9 * ch, 1.4 * ch);
         }
       } else if (k === Kind.Splitter) {
-        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 12, Spr.Splitter, s.eseed[i], f, thr, 0.8, this.shade(x, y)); gl.add(x, y, 7, 0.4, 0.28, 0.04); }
+        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 12, Spr.Splitter, s.eseed[i], f, thr, 0.8, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.8, 1); gl.add(x, y, 7, 0.4, 0.28, 0.04); }
       } else if (k === Kind.Rammer) {
         if (this.visible(x, y, 10)) {
           const pz = 0.6 + 0.4 * Math.sin(time * 14 + i);
-          sp.add(x, y, a, SK * 12, Spr.Rammer, s.eseed[i], Math.max(f, 0.15 * pz), thr, 0.62, this.shade(x, y)); gl.add(x, y, 6, 0.9 * pz, 0.45 * pz, 0.1);
+          sp.add(x, y, a, SK * 12, Spr.Rammer, s.eseed[i], Math.max(f, 0.15 * pz), thr, 0.62, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.62, 1); gl.add(x, y, 6, 0.9 * pz, 0.45 * pz, 0.1);
         }
       } else if (k === Kind.Tender) {
         if (this.visible(x, y, 14)) {
-          sp.add(x, y, a, SK * 15, Spr.Tender, s.eseed[i], f, thr * 0.5, 0.7, this.shade(x, y));
+          sp.add(x, y, a, SK * 15, Spr.Tender, s.eseed[i], f, thr * 0.5, 0.7, this.shade(x, y)); this.ship(x, y, a, SK * 15, 0.7, 1);
           gl.add(x, y, 8, 0.08, 0.45, 0.18);
           gl.add(x, y, 28, 0.02, 0.09 + 0.04 * Math.sin(time * 4), 0.04);
         }
       } else if (this.visible(x, y, 18)) {
-        sp.add(x, y, a, SK * 12, Spr.Minelayer, s.eseed[i], f, thr * 0.7, 0.65, this.shade(x, y));
+        sp.add(x, y, a, SK * 12, Spr.Minelayer, s.eseed[i], f, thr * 0.7, 0.65, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.65, 1);
         gl.add(x, y, 7, 0.26, 0.06, 0.24);
       }
     }
@@ -238,11 +249,11 @@ export class FrameBuilder {
       this.zE(this.pz); const x = s.spx + (s.sx - s.spx) * al, y = s.spy + (s.sy - s.spy) * al + this.zoff;
       let da = s.sa - s.spa; da = Math.atan2(Math.sin(da), Math.cos(da));
       const a = s.spa + da * al;
-      const target = s.thrusting ? (s.boosting ? 1.35 : 0.9) : 0.12;
+      const target = s.thrusting ? (s.boosting ? 1.35 : 0.9) : 0.25;   // idle pilot light: the engine is never fully dark
       this.thrS += (target - this.thrS) * 0.22;
       const S = s.ship, rk = S.radius / 2.4 * SK;
       sp.add(x, y, a, SK * S.artSize, S.art, this.hullState() + 2 * ((s.up[6] > 0 ? 1 : 0) | (s.up[8] >= 2 ? 2 : 0) | (s.up[1] >= 3 ? 4 : 0)), s.hitFlash * 0.8, this.thrS, 0.72, this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
-      if (S.darkSig >= 1 || this.dark < 0.5) gl.add(x, y, 9, 0.16, 0.18, 0.24);
+      if (S.darkSig >= 1 || this.dark < 0.5) { gl.add(x, y, 9, 0.16, 0.18, 0.24); this.ship(x, y, a, SK * S.artSize, 0.72, 0); }
       if (s.thrusting) {
         const ca = Math.cos(a), sa = Math.sin(a);
         const rad = (s.boosting ? 8 : 5.5) * (S.darkSig < 1 ? 0.6 : 1);
@@ -250,7 +261,7 @@ export class FrameBuilder {
         gl.add(x - ca * 7 * rk + sa * 2 * rk, y - sa * 7 * rk - ca * 2 * rk, rad, s.boosting ? 0.2 : 0.55, s.boosting ? 0.8 : 0.28, s.boosting ? 1.3 : 0.06);
       }
       if (s.muzzleT > 0) gl.add(x + Math.cos(a) * 9.5 * rk, y + Math.sin(a) * 9.5 * rk, 5, 0.6, 0.12, 0.08);
-    } else this.thrS = 0.12;
+    } else this.thrS = 0.25;
     for (let i = 0; i < MAX_E; i++) {
       if (s.ek[i] !== Kind.Wing) continue;
       this.zE(s.ez[i]); const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back + this.zoff;
@@ -294,6 +305,14 @@ export class FrameBuilder {
       if (Math.hypot(s.evx[i], s.evy[i]) > 8) b.put(this.cx(x - ca * n[1] * SK), this.cy(y - sa * n[1] * SK), flick ? G.colon : G.dotA, r * 0.5, g * 0.5, bb * 0.5, 0);
     }
     this.zE(0); this.bandF = 1;
+    // always-on lights: red/green wingtips plus a strobe, so a ship never reads as a static texture
+    for (let i = 0; i < this.nl; i++) {
+      const o = i * 6, t = this.lt, x = t[o], y = t[o + 1], a = t[o + 2], R = t[o + 3], al = t[o + 4], k = t[o + 5], ca = Math.cos(a), sa = Math.sin(a);
+      const bx = x - ca * R * 0.2, by = y - sa * R * 0.2, lat = R * 0.85;
+      b.put(this.cx(bx - sa * lat), this.cy(by + ca * lat), G.bul, 2.0 * k, 0.12 * k, 0.1 * k, 2);
+      b.put(this.cx(bx + sa * lat), this.cy(by - ca * lat), G.bul, 0.1 * k, 1.8 * k, 0.25 * k, 2);
+      if ((time + i * 0.37) % 1.2 < 0.14) b.put(this.cx(x - ca * R * 0.55), this.cy(y - sa * R * 0.55), G.star, (al === 0 ? ACCENT[0] : al === 1 ? 2.2 : 2.0) * k, (al === 0 ? ACCENT[1] : al === 1 ? 0.5 : 1.5) * k, (al === 0 ? ACCENT[2] : al === 1 ? 0.5 : 0.3) * k, 2);
+    }
     if (s.alive) {
       const al = this.alpha, x = s.spx + (s.sx - s.spx) * al, y = s.spy + (s.sy - s.spy) * al + this.zy(this.pz);
       let da = s.sa - s.spa; da = Math.atan2(Math.sin(da), Math.cos(da));

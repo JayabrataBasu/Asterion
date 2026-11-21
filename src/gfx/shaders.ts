@@ -451,6 +451,7 @@ uniform ivec2 uCells; uniform ivec2 uOrigin;
 uniform float uExposure, uDither, uBgK, uFgBase, uFgGain, uTime;
 uniform vec3 uReveal;      // typed arrival: x = revealed radius (cells), y = front width, z = on
 uniform int uLayers;       // debug: tint cells by layer
+uniform vec4 uQZ[16]; uniform int uQN;   // ship quiet zones: xy = centre (cells), z = hull radius (cell widths), w = allegiance (0 player, 1 hostile, 2 neutral)
 out vec4 o;
 ${GLYPH_COV}
 float bayer4(ivec2 c){
@@ -467,11 +468,22 @@ void main(){
   vec4 ma = texelFetch(uMA, cell, 0);
   vec3 fg, bg;
   int g;
+  float qa = 1.0, qal = 0.0;                          // quiet zone: 0 right at a ship, 1 beyond ~3 cells; graded in between
+  { vec2 cc = vec2(cell) + 0.5;
+    for (int i = 0; i < 16; i++) {
+      if (i >= uQN) break;
+      vec4 z = uQZ[i];
+      float d = length((cc - z.xy) * vec2(1.0, 2.0)) - z.z * 0.7;
+      float a = clamp(d / (3.0 + 0.25 * z.z), 0.0, 1.0); a = a * a * (3.0 - 2.0 * a);
+      if (a < qa) { qa = a; qal = z.w; }
+    } }
   if (ma.a > 0.0) {                                   // sprite cell: shape-matched glyph
     vec4 mb = texelFetch(uMB, cell, 0);
     g = int(ma.a * 255.0 + 0.5);
     fg = ma.rgb;
-    bg = mix(s.rgb * uBgK * (s.a > 0.0 ? 0.04 : 1.0), mb.rgb, mb.a);
+    if (qa < 1.0) { float ll = dot(fg, vec3(0.2126, 0.7152, 0.0722)); fg *= clamp(1.1 / max(ll, 0.02), 1.0, 5.0); }   // adaptive contrast: a ship cell never goes darker than a floor
+    bg = mix(s.rgb * uBgK * (s.a > 0.0 ? 0.04 : 1.0) * qa, mb.rgb, mb.a);
+    if (qa < 1.0) bg = max(bg, fg * 0.4 * mb.a);     // hull tile never sinks into the dark zone
   } else {
     float lum = dot(s.rgb, vec3(0.2126, 0.7152, 0.0722));
     float l = 1.0 - exp(-lum * uExposure);
@@ -502,8 +514,15 @@ void main(){
     h += texelFetch(uMA, max(cell - ivec2(1, 0), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
     h += texelFetch(uMA, min(cell + ivec2(0, 1), uCells - 1), 0).a > 0.0 ? 1.0 : 0.0;
     h += texelFetch(uMA, max(cell - ivec2(0, 1), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
-    float dim = 1.0 - 0.85 * min(1.0, h);           // dark outline ring around ships so they read against anything
+    h += texelFetch(uMA, min(cell + ivec2(1, 1), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;     // diagonals too, so no gap leaks backdrop to the hull edge
+    h += texelFetch(uMA, clamp(cell + ivec2(-1, 1), ivec2(0), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;
+    h += texelFetch(uMA, clamp(cell + ivec2(1, -1), ivec2(0), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;
+    h += texelFetch(uMA, max(cell - ivec2(1, 1), ivec2(0)), 0).a > 0.0 ? 0.5 : 0.0;
+    float dim = (1.0 - 0.9 * min(1.0, h)) * qa;      // dark ring + graded quiet zone: ships always sit in darkness
     bg *= dim; fg *= dim;
+    float ring = smoothstep(0.0, 0.12, qa) * (1.0 - smoothstep(0.12, 0.45, qa));        // allegiance rim: a faint tint on the first ring around the hull
+    if (qal > 0.5 && qal < 1.5 && ((cell.x + cell.y) & 1) == 1) ring *= 0.3;           // colour-blind backup: hostile rims are dotted, the player's is solid
+    bg += (qal < 0.5 ? vec3(0.02, 0.16, 0.11) : qal < 1.5 ? vec3(0.17, 0.02, 0.04) : vec3(0.14, 0.09, 0.01)) * ring;
   }
   if (uReveal.z > 0.0) {                              // typed arrival: the scene writes itself in outward from the centre
     float rd = length((vec2(cell) - vec2(uCells) * 0.5) * vec2(1.0, 2.0));

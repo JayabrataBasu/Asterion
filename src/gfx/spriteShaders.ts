@@ -427,10 +427,10 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     spec = 0.8;
   } else if (ty == 15) {               // anvil: bright gunmetal plating rows (heavy glyphs), hazard stripes, per-barrel muzzle flash
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(1.0, 0.66, 0.20) : (m == dp.y ? vec3(0.45, 0.42, 0.40) : vec3(0.80, 0.50, 0.22));
+    col = m == dp.x ? vec3(0.42, 0.62, 0.95) : (m == dp.y ? vec3(0.45, 0.45, 0.50) : vec3(0.58, 0.68, 0.85));   // steel-blue: orange/red is reserved for hostiles
     col *= 1.0 - 0.35 * panel(q.x * 0.55, 0.07) - 0.25 * panel(q.y * 0.6 + 0.25, 0.07);
-    col = mix(col, vec3(0.95, 0.62, 0.10), step(0.5, fract((q.x + q.y) * 0.5)) * smoothstep(0.6, 0.3, abs(q.y - 6.4)) * step(m, dp.z + 0.001));
-    emis += smoothstep(0.6, 0.2, abs(q.x - 5.0)) * smoothstep(0.5, 0.2, abs(q.y - 2.2)) * vec3(1.6, 0.2, 0.1) * (0.5 + 0.5 * blink);
+    col = mix(col, vec3(1.0, 0.85, 0.12), step(0.5, fract((q.x + q.y) * 0.5)) * smoothstep(0.6, 0.3, abs(q.y - 6.4)) * step(m, dp.z + 0.001));
+    emis += smoothstep(0.6, 0.2, abs(q.x - 5.0)) * smoothstep(0.5, 0.2, abs(q.y - 2.2)) * vec3(1.6, 1.3, 0.2) * (0.5 + 0.5 * blink);
     if (gS > 0.0) { float lat = gS * 10.0 - 5.0; vec2 tip = vec2(abs(lat) < 2.0 ? 13.5 : 12.0, lat); emis += smoothstep(1.8, 0.0, length(p - tip)) * vec3(2.6, 1.8, 0.7) * 1.5; }
     emis += smoothstep(1.2, 0.0, length((q - vec2(-11.7, 3.0)) / vec2(1.0, 1.3))) * vec3(1.6, 0.6, 0.2) * (0.4 + thr);
     spec = 0.45;
@@ -637,6 +637,7 @@ void main(){
       vec3 n = normalize(vec3(-(h1 - h) / e * 1.6, -(h2 - h) / e * 1.6 * sgn, 1.0));
       vec3 emis; float spec;
       vec3 al = paint(ty, q, p, dp, h, thr, gS, emis, spec);
+      if (ty == 1 || ty == 2 || ty == 3 || (ty >= 9 && ty <= 13)) al = mix(vec3(dot(al, vec3(0.333))), al, 0.78) * 0.92;   // hostile hulls slightly desaturated: the player's hull is always the most saturated thing on screen
       if (mod(floor(gM / 4.0), 2.0) >= 1.0) al *= 1.0 - 0.32 * panel(q.x * 0.9, 0.09);   // armour plating rows
       float diff = clamp(dot(n, L3), 0.0, 1.0);
       float sp = pow(max(dot(n, normalize(L3 + vec3(0.0, 0.0, 1.0))), 0.0), 22.0) * spec;

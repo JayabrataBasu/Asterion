@@ -51,6 +51,8 @@ export class Renderer {
   private readonly pa = new Float32Array(32); private readonly pb = new Float32Array(32);
   private readonly G = new Float32Array(24);
   private readonly pc = new Float32Array(32);
+  /** Ship quiet zones for this frame (cell units): x, y, hull radius, allegiance. */
+  private readonly qz = new Float32Array(64); private qn = 0;
   private readonly fill = Int32Array.from(Array.from(FILL_CHARS, c => gi(c)));
   private timerExt: any = null; private queries: WebGLQuery[] = []; private qIdx = 0; private qPending: boolean[] = [false, false, false];
 
@@ -72,7 +74,7 @@ export class Renderer {
     this.pComp = this.prog(S.VS_FULLSCREEN, S.FS_COMPOSITE);
     this.uScene = this.locs(this.pScene, ['uRes', 'uCam', 'uAspect', 'uTime', 'uNP', 'uPA', 'uPB', 'uPC', 'uG', 'uNeb', 'uSun', 'uStreak', 'uTint', 'uShipL', 'uFlare', 'uStorm', 'uSunTint', 'uEcl', 'uMega', 'uCombat', 'uHyper']);
     this.uGlow = this.locs(this.pGlow, ['uRes', 'uCam', 'uAspect']);
-    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers']);
+    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers', 'uQZ', 'uQN']);
     this.uGlyph = this.locs(this.pGlyph, ['uCellPx', 'uOrigin', 'uCanvas', 'uScene', 'uAtlas', 'uBgK']);
     this.uSprite = this.locs(this.pSprite, ['uRes', 'uCam', 'uAspect', 'uTime']);
     this.uMatch = this.locs(this.pMatch, ['uSpr', 'uSig', 'uCand', 'uNC', 'uFill']);
@@ -225,7 +227,12 @@ export class Renderer {
   get rampName(): string { return RAMPS[settings.ramp % RAMPS.length].name; }
 
   // ------------------------------------------------------------------ frame
-  beginFrame(): void { this.glyphs.reset(this.cols, this.rows); this.glows.reset(); this.sprites.reset(); }
+  beginFrame(): void { this.glyphs.reset(this.cols, this.rows); this.glows.reset(); this.sprites.reset(); this.qn = 0; }
+  /** Register a ship: the backdrop fades to black around (cx, cy) so the hull always sits in darkness. al: 0 player, 1 hostile, 2 neutral. */
+  quiet(cx: number, cy: number, radius: number, al: number): void {
+    if (this.qn >= 16 || cx < -40 || cy < -20 || cx > this.cols + 40 || cy > this.rows + 20) return;
+    const o = this.qn++ * 4; this.qz[o] = cx; this.qz[o + 1] = cy; this.qz[o + 2] = radius; this.qz[o + 3] = al;
+  }
 
   render(f: FrameParams): void {
     const gl = this.gl, st = settings;
@@ -303,7 +310,7 @@ export class Renderer {
     gl.uniform2i(a.uCells, this.cols, this.rows); gl.uniform2i(a.uOrigin, this.ox, this.oy); gl.uniform2i(a.uCellPx, this.cwPx, this.chPx);
     gl.uniform1f(a.uExposure, st.exposure); gl.uniform1f(a.uDither, st.dither); gl.uniform1f(a.uBgK, st.bgK);
     gl.uniform1f(a.uFgBase, st.fgBase); gl.uniform1f(a.uFgGain, st.fgGain); gl.uniform1f(a.uTime, f.time);
-    gl.uniform3f(a.uReveal, f.reveal ?? -1, 4, f.reveal !== undefined && f.reveal >= 0 ? 1 : 0); gl.uniform1i(a.uLayers, f.layers ? 1 : 0);
+    gl.uniform3f(a.uReveal, f.reveal ?? -1, 4, f.reveal !== undefined && f.reveal >= 0 ? 1 : 0); gl.uniform1i(a.uLayers, f.layers ? 1 : 0); gl.uniform4fv(a.uQZ, this.qz); gl.uniform1i(a.uQN, this.qn);
     gl.drawArrays(gl.TRIANGLES, 0, 3); this.drawCalls++;
 
     // ---- pass 3: instanced glyphs (entities, particles, HUD)

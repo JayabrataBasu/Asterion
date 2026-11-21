@@ -463,6 +463,7 @@ function pollInput(): number {
   if (q.has('sys')) explorer.enter(Math.max(0, Math.min(39, parseInt(q.get('sys')!, 10) | 0)), false);
   if (q.has('setpiece')) { const k = ({ beacon: 0, derelict: 1, pulsar: 2, wormhole: 4, signal: 10 } as Record<string, number>)[q.get('setpiece')!] ?? 1; sim.setPoi(0, sim.sx + (k === 1 ? 40 : 70), sim.sy + (k === 1 ? 70 : 20), k, 0.3); sim.poiDone[0] = 1; }
   if (q.has('scanview')) { fb.scanR = -1; fb.scanEnv = 1; fb.scanText = 'T=184K  CH4 62% H2 31% NH3 5%  MASS 4.1E26 KG  RINGS: ICE  '; }
+  if (q.has('idle')) sim.invuln = 0;   // debug: no spawn-invulnerability blink, so screenshots always catch the ship
   if (q.has('ship')) sim.setShip(shipById(q.get('ship')!));
   if (q.has('vert')) sim.vert = q.get('vert') !== '0';
   if (q.has('tune')) mountTuner(sim, id => sim.setShip(shipById(id)));
@@ -604,9 +605,11 @@ let camX = 0, camY = 0, camInit = false;
 let combat = 0;
 const THEMES: [number, number, number][] = [[1, 1, 1], [1.55, 0.6, 0.55], [0.6, 1.3, 0.8], [1.2, 0.7, 1.55], [1.4, 1.0, 0.5], [0.7, 1.1, 1.55]];
 const tint: [number, number, number] = [1, 1, 1];
+const forceTheme = parseInt(new URLSearchParams(location.search).get('theme') ?? '-1', 10);   // debug: ?theme=0..5 pins the nebula theme
+if (forceTheme >= 0) { const t0 = THEMES[forceTheme % THEMES.length]; tint[0] = t0[0]; tint[1] = t0[1]; tint[2] = t0[2]; }
 function updateTint(dt: number, x: number, y: number): void {
   const sx = sectorOf(x), sy = sectorOf(y);
-  const th = (sx === 0 && sy === 0) ? THEMES[0] : THEMES[Math.floor(hash2(sx * 7 + 3, sy * 13 + 1) * THEMES.length) % THEMES.length];
+  const th = forceTheme >= 0 ? THEMES[forceTheme % THEMES.length] : (sx === 0 && sy === 0) ? THEMES[0] : THEMES[Math.floor(hash2(sx * 7 + 3, sy * 13 + 1) * THEMES.length) % THEMES.length];
   const k = 1 - Math.exp(-0.8 * dt);
   for (let i = 0; i < 3; i++) tint[i] += (th[i] - tint[i]) * k;
 }
