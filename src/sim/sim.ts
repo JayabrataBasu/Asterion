@@ -1,6 +1,6 @@
 import { Rng, TAU, clamp, hash2, wrapAngle } from '../core/util';
 import { SpatialHash } from './spatial';
-import { MAX_PLANETS, PLANET_STRIDE, gravReach, SECTOR, STATION_MULT, hasStation, planetParams, planetsNear, sectorOf, stationType } from './world';
+import { MAX_PLANETS, PLANET_STRIDE, SYS, gravReach, SECTOR, STATION_MULT, hasStation, inSystem, nebulaAt, planetParams, planetsNear, sectorOf, stationType } from './world';
 import { ENEMY, FLIGHT, WREN, assignShip, cloneShip, type ShipDef } from './ships';
 
 /**
@@ -20,11 +20,16 @@ export const enum Kind { None = 0, Drone = 1, Gunship = 2, Minelayer = 3, Mine =
 export const enum Dmg { Kinetic = 0, Thermal = 1, Em = 2 }
 export const enum St { Patrol = 0, Chase = 1, Attack = 2, Flee = 3 }
 export const enum In { Missile = 128, Thrust = 1, Left = 2, Right = 4, Brake = 8, Fire = 16, Boost = 32, Dodge = 64, StrafeL = 256, StrafeR = 512, Climb = 1024, Dive = 2048, Scan = 4096, Cruise = 8192 }
-export const enum Ev { PlayerShot = 1, EnemyShot = 2, Hit = 3, Explosion = 4, ShipHit = 5, Kill = 6, Charge = 7, Pickup = 8, Dash = 9, Boss = 10, Objective = 11, Dock = 12, Missile = 13, Heal = 14 }
-export const enum Up { Gun = 0, Hull = 1, Boost = 2, Thrust = 3, Magnet = 4, Spread = 5, Missile = 6 }
-export const UP_N = 7, UP_MAX = 5;
-export const UP_NAME = ['CANNONS', 'HULL PLATING', 'BOOST CELLS', 'ENGINES', 'SCRAP MAGNET', 'SPREAD SHOT', 'MISSILES'];
-export const UP_DESC = ['+fire rate, +damage', '+25 max hull', '+25 boost capacity', '+8% thrust', '+pickup range', 'side bolts', 'homing, ignores shields'];
+export const enum Ev { PlayerShot = 1, EnemyShot = 2, Hit = 3, Explosion = 4, ShipHit = 5, Kill = 6, Charge = 7, Pickup = 8, Dash = 9, Boss = 10, Objective = 11, Dock = 12, Missile = 13, Heal = 14,
+  Scan = 15, Poi = 16, Jump = 17, Wormhole = 18, Hauler = 19, Saved = 20, Cruise = 21 }
+export const enum Up { Gun = 0, Hull = 1, Boost = 2, Thrust = 3, Magnet = 4, Spread = 5, Missile = 6, Reactor = 7, Sensors = 8, Tank = 9 }
+export const UP_N = 10, UP_MAX = 5;
+export const UP_NAME = ['CANNONS', 'HULL PLATING', 'BOOST CELLS', 'ENGINES', 'SCRAP MAGNET', 'SPREAD SHOT', 'MISSILES', 'REACTOR', 'SENSORS', 'FUEL TANKS'];
+export const UP_DESC = ['+fire rate, +damage', '+25 max hull', '+25 boost capacity', '+8% thrust', '+pickup range', 'side bolts', 'homing, ignores shields',
+  '+15% energy, +12% cooling', '+15% sensor range, +20% scan speed', '+20% fuel capacity'];
+/** Points of interest per system (set by the galaxy layer on arrival). */
+export const MAX_POI = 6;
+const ORE_TAG = 0x0e0e0e0e;
 export function upCost(level: number): number { return 30 + 25 * level; }
 export const MAX_S = 96;
 export const MAX_M = 12;
@@ -77,6 +82,20 @@ export class Sim {
   nWing = 0; wingCd = 0;
   /** Scan progress 0..1 while the scan key is held (M5); drives Sextant's petals. */
   scanP = 0;
+  /** Scan candidates (x, y, r) supplied by the exploration layer each frame; scanIdx = the one being scanned. */
+  readonly scanList = new Float32Array(16 * 3); nScan = 0; scanIdx = -1; private scanCd = 0;
+  /** Fuel, time-compressed cruise, jump-drive charge (seconds left, 0 = idle). */
+  fuel = 100; cruise = false; jumpT = 0; jumpLen = 0;
+  /** Points of interest of the current system: x, y, kind, seed, state (0 untouched, 1 triggered). */
+  readonly poiX = new Float32Array(MAX_POI); readonly poiY = new Float32Array(MAX_POI); readonly poiK = new Int8Array(MAX_POI);
+  readonly poiS = new Float32Array(MAX_POI); readonly poiDone = new Uint8Array(MAX_POI); nPoi = 0;
+  /** System hazards and pressure set by the galaxy layer: hot star (heat), ion zone strength (live), enemy pressure. */
+  hotSys = false; zoneStorm = 0; pressure = 1; radiation = 0;
+  /** Distance travelled this run (units) and trade goods by commodity. */
+  dist = 0;
+  readonly cargoBy = new Int16Array(6);
+  get fuelMax(): number { return this.ship.fuelMax * (1 + 0.2 * this.up[Up.Tank]); }
+  get sensorR(): number { return this.ship.sensorRange * (1 + 0.15 * this.up[Up.Sensors]); }
   get shieldMax(): number { return this.ship.shieldMax; }
   setShip(d: ShipDef): void { assignShip(this.ship, d); this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.dashN = this.ship.dashCharges; }
   shots = 0; hits = 0; dashCd = 0; muzzleT = 0; hpIdx = 0;
@@ -203,7 +222,7 @@ export class Sim {
     this.shake = 0; this.flash = 0; this.input = 0;
     this.alive = true; this.deadT = 0;
     this.sx = 0; this.sy = 0; this.svx = 0; this.svy = 0; this.sa = 0.3; this.spx = 0; this.spy = 0; this.spa = 0.3;
-    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.firedT = 0; this.wingCd = 3; this.nWing = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
+    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.fuel = this.fuelMax; this.cruise = false; this.jumpT = 0; this.scanP = 0; this.scanIdx = -1; this.dist = 0; this.cargoBy.fill(0); this.cargoUsed = 0; this.poiDone.fill(0); this.heat = 0; this.overheat = false; this.firedT = 0; this.wingCd = 3; this.nWing = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
     this.objKills = 0; this.objTarget = 6; this.objTier = 0; this.nextBoss = 150; this.frIdx = -1; this.escortFails = 0; this.sw = 0;
     this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.ecl = 0; this.mega = 0; this.eclT = 0; this.megaT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
     this.caches.clear(); this.slowT = 0; this.bossKills = 0; this.missiles = this.missileCap; this.missileCd = 0; this.mlife.fill(0); this.eshield.fill(0);
@@ -270,9 +289,14 @@ export class Sim {
     const ca = Math.cos(this.sa), sa = Math.sin(this.sa);
 
     this.thrusting = false; this.boosting = false;
+    if ((inp & In.Cruise) && !(this.prevCruiseIn)) this.toggleCruise();
+    this.prevCruiseIn = (inp & In.Cruise) !== 0;
     if (inp & In.Thrust) {
       let a = S.thrustFwd / S.mass * (1 + 0.08 * this.up[Up.Thrust]);
-      if ((inp & In.Boost) && this.boostE > 1) { a *= S.boostMult; this.boostE -= S.boostDrain * DT; this.boosting = true; }
+      if (this.fuel <= 0) a *= 0.3;                                          // dry tanks: thrusters on reserve
+      else if ((inp & In.Boost) && this.boostE > 1 && !this.cruise) { a *= S.boostMult; this.boostE -= S.boostDrain * DT; this.boosting = true; }
+      if (this.cruise) a *= 3;
+      if (this.fuel > 0) this.fuel = Math.max(0, this.fuel - S.fuelBurn * DT * (this.boosting ? 2 : 1) * (this.cruise ? 1.5 : 1));
       this.svx += ca * a * DT; this.svy += sa * a * DT;
       this.thrusting = true;
     }
@@ -321,6 +345,7 @@ export class Sim {
       if (d > r + R && d < r + R + 7 && (this.svx * this.svx + this.svy * this.svy) > 900) {   // atmosphere skim: speed boost, heat
         const k3 = 1 + 0.35 * DT; this.svx *= k3; this.svy *= k3;
         this.hp = Math.max(1, this.hp - 3 * DT);
+        if (this.pl[o + 3] === 1 && (!this.vert || this.sz < -V_TOL)) { this.fuel = Math.min(this.fuelMax, this.fuel + 9 * DT); this.scooping = 0.2; }   // gas giant fuel scoop
         if ((this.tick & 3) === 0) this.sparks(this.sx, this.sy, 1, Col.Fire, 30);
       }
       if (d < r + R) {
@@ -335,16 +360,18 @@ export class Sim {
     }
 
     const sp = Math.sqrt(this.svx * this.svx + this.svy * this.svy);
-    const maxS = this.boosting ? S.maxSpeed * FLIGHT.BOOST_TOP_K : S.maxSpeed;
+    const maxS = this.cruise ? S.maxSpeed * 4 : this.boosting ? S.maxSpeed * FLIGHT.BOOST_TOP_K : S.maxSpeed;
     if (sp > maxS) { const f = 1 - FLIGHT.SPEED_CAP_K * DT * (1 - maxS / sp); this.svx *= f; this.svy *= f; }
     this.sx += this.svx * DT; this.sy += this.svy * DT;
+    this.dist += Math.sqrt(this.svx * this.svx + this.svy * this.svy) * DT;
+    this.updateExplore(S, inp);
 
     // weapons: one bolt per cooldown from the next hardpoint (fixed fire along the nose, turrets track the nearest hostile)
     this.assistTarget = this.aimAssist === 2 ? this.findAimTarget(this.sx, this.sy, this.sa, AIM_ASSIST.B_CONE, AIM_ASSIST.B_RANGE)
       : this.aimAssist === 3 ? this.findAimTarget(this.sx, this.sy, this.sa, AIM_ASSIST.C_CONE, AIM_ASSIST.C_RANGE) : -1;
     this.cool -= DT;
     const nhp = S.hardpoints.length;
-    if ((inp & In.Fire) && this.cool <= 0 && !this.overheat && this.energy >= 1) {
+    if ((inp & In.Fire) && this.cool <= 0 && !this.overheat && this.energy >= 1 && !this.cruise && this.jumpT <= 0) {
       this.energy -= 1; this.heat += FLIGHT.SHOT_HEAT; this.firedT = 0.6;
       this.cool = FLIGHT.FIRE_COOL * 2 / nhp / S.fireRateMult * (1 - 0.07 * this.up[Up.Gun]); this.shots++;
       this.gunSide = -this.gunSide;
@@ -409,12 +436,14 @@ export class Sim {
 
   /** Energy, heat, shields, signature and the hull-specific quirks that tick every frame. */
   private updatePower(S: ShipDef): void {
-    this.energy = Math.min(S.energyMax, this.energy + S.energyRegen * DT);
+    this.energy = Math.min(S.energyMax, this.energy + S.energyRegen * (1 + 0.15 * this.up[Up.Reactor]) * DT);
+    if (this.hotSys && this.sx * this.sx + this.sy * this.sy < 1100 * 1100) this.heat += 6 * DT;      // close to a hot star
+    if (this.radiation > 0) this.hurt(this.radiation * DT, Dmg.Em);
     if (this.boosting) this.heat += FLIGHT.BOOST_HEAT * DT;
-    this.heat = Math.max(0, this.heat - S.heatDissipation * DT);
+    this.heat = Math.max(0, this.heat - S.heatDissipation * (1 + 0.12 * this.up[Up.Reactor]) * DT);
     if (this.heat > S.heatMax) { this.overheat = true; this.heat = Math.min(this.heat, S.heatMax * 1.25); this.hurt((this.heat - S.heatMax) * 0.4 * DT + 2 * DT, Dmg.Thermal); }
     else if (this.overheat && this.heat < S.heatMax * 0.5) this.overheat = false;
-    const stormHere = this.storm > 0.3 && (!this.vert || this.sz > -V_TOL);   // storms reach Mid and High only
+    const stormHere = Math.max(this.storm, this.zoneStorm) > 0.3 && (!this.vert || this.sz > -V_TOL);   // storms reach Mid and High only
     if (stormHere) this.shield = 0;                                           // ion storms knock shields out
     else if (this.time - this.lastHit > S.shieldDelay) this.shield = Math.min(S.shieldMax, this.shield + S.shieldRegen * DT);
     this.firedT -= DT;
@@ -436,7 +465,98 @@ export class Sim {
   /** Environmental multiplier on signature (planet shadow / low band set by M4-M5 systems). */
   sigMod = 1;
 
-  private lowCover = 0;
+  private lowCover = 0; private prevCruiseIn = false; scooping = 0;
+
+  /** Cruise: time-compressed in-system travel. Only with no hostiles near; anything interesting interrupts it. */
+  toggleCruise(): void {
+    if (this.cruise) { this.cruise = false; this.emit(Ev.Cruise, this.sx, this.sy, 0); return; }
+    if (!this.alive || this.hostileNear(320) || this.jumpT > 0) return;
+    this.cruise = true; this.emit(Ev.Cruise, this.sx, this.sy, 1);
+  }
+  private hostileNear(r: number): boolean {
+    for (let i = 0; i < MAX_E; i++) {
+      const k = this.ek[i]; if (!this.isAimTarget(k)) continue;
+      const dx = this.ex[i] - this.sx, dy = this.ey[i] - this.sy; if (dx * dx + dy * dy < r * r) return true;
+    }
+    return false;
+  }
+  /** Begin charging the jump drive (the exploration layer checks range and fuel first). */
+  startJump(charge: number): void { if (this.alive && this.jumpT <= 0) { this.jumpT = this.jumpLen = charge; this.cruise = false; } }
+
+  /** Scanning, cruise interruptions, jump charge, POI triggers and hazards. */
+  private updateExplore(S: ShipDef, inp: number): void {
+    if (this.scooping > 0) this.scooping -= DT;
+    // ---- scan: hold the key; nearest unscanned candidate in sensor range; nebulae and ion storms halve the speed
+    this.scanCd -= DT;
+    let best = -1, bd = this.sensorR;
+    if ((inp & In.Scan) && this.scanCd <= 0) for (let c = 0; c < this.nScan; c++) {
+      const d = Math.hypot(this.scanList[c * 3] - this.sx, this.scanList[c * 3 + 1] - this.sy) - this.scanList[c * 3 + 2];
+      if (d < bd) { bd = d; best = c; }
+    }
+    if (best >= 0) {
+      if (best !== this.scanIdx) { this.scanIdx = best; this.scanP = 0; }
+      const jam = (nebulaAt(sectorOf(this.sx), sectorOf(this.sy)) > 0.5 || Math.max(this.storm, this.zoneStorm) > 0.3) && S.nebulaScan < 1 ? 0.5 : 1;
+      this.scanP += DT * S.scanRate * (1 + 0.2 * this.up[Up.Sensors]) * jam / 2.5;
+      if (this.scanP >= 1) { this.emit(Ev.Scan, this.scanList[best * 3], this.scanList[best * 3 + 1], best); this.scanP = 0; this.scanIdx = -1; this.scanCd = 0.8; }
+    } else { this.scanP = Math.max(0, this.scanP - DT * 2); if (this.scanP === 0) this.scanIdx = -1; }
+    // ---- cruise interruptions: hostiles, gravity wells
+    if (this.cruise && ((this.tick & 7) === 0 && this.hostileNear(320) || this.nearWell())) { this.cruise = false; this.emit(Ev.Cruise, this.sx, this.sy, 0); }
+    // ---- jump charge
+    if (this.jumpT > 0) { this.jumpT -= DT; if (this.jumpT <= 0) { this.jumpT = 0; this.emit(Ev.Jump, this.sx, this.sy, 1); } }
+    // ---- points of interest: trigger once on approach; pulsars irradiate, ion storms knock out shields
+    this.radiation = 0; this.zoneStorm = 0;
+    for (let p = 0; p < this.nPoi; p++) {
+      const dx = this.poiX[p] - this.sx, dy = this.poiY[p] - this.sy, d = Math.sqrt(dx * dx + dy * dy), k = this.poiK[p];
+      if (k === 2 && d < 320) this.radiation = Math.max(this.radiation, 12 * (1 - d / 320));
+      if (k === 5 && d < 420) this.zoneStorm = Math.max(this.zoneStorm, Math.min(1, (420 - d) / 120));
+      if (this.cruise && d < 180) { this.cruise = false; this.emit(Ev.Cruise, this.sx, this.sy, 0); }
+      if (this.poiDone[p]) continue;
+      const reach = k === 1 ? 140 : k === 4 ? 14 : k === 9 ? 1500 : k === 7 || k === 8 ? 700 : k === 6 ? 600 : 80;
+      if (d < reach) { this.poiDone[p] = 1; this.triggerPoi(p, k); }
+    }
+  }
+  private nearWell(): boolean {
+    for (let k = 0; k < this.nPl; k++) { const o = k * PLANET_STRIDE, dx = this.pl[o] - this.sx, dy = this.pl[o + 1] - this.sy, r = this.pl[o + 2]; if (Math.sqrt(dx * dx + dy * dy) < r + gravReach(r) * 0.6) return true; }
+    return false;
+  }
+  /** Sim-side consequences of reaching a POI; the exploration layer adds rewards, lore and news on Ev.Poi. */
+  private triggerPoi(p: number, k: number): void {
+    const x = this.poiX[p], y = this.poiY[p], sd = this.poiS[p];
+    this.emit(k === 4 ? Ev.Wormhole : Ev.Poi, x, y, p);
+    if (k === 0) {                                                            // distress beacon: a cache, sometimes an ambush
+      for (let i = 0; i < 5; i++) { this.spawnScrap(x + (this.rng.next() - 0.5) * 16, y + (this.rng.next() - 0.5) * 10, i === 4 ? 25 : 8, i === 4 ? 1 : 0); this.scl[(this.scur + MAX_S - 1) % MAX_S] = 1e6; }
+      if (sd < 0.5) for (let i = 0; i < 3; i++) { const e = this.spawnEnt(Kind.Drone, x + 60 + i * 8, y + 40, 0, 0); if (e >= 0) this.es[e] = St.Chase; }
+    } else if (k === 1) {                                                     // derelict: salvage along the hull
+      for (let i = 0; i < 8; i++) { this.spawnScrap(x + (i - 4) * 22, y + (this.rng.next() - 0.5) * 20, 10, 0); this.scl[(this.scur + MAX_S - 1) % MAX_S] = 1e6; }
+    } else if (k === 6) {                                                     // ore-rich belt: dense rocks that drop extra scrap
+      for (let i = 0; i < 26; i++) {
+        const a = this.rng.next() * TAU, d = Math.sqrt(this.rng.next()) * 120;
+        const e = this.spawnEnt(Kind.Asteroid, x + Math.cos(a) * d, y + Math.sin(a) * d * 0.7, 0, 0);
+        if (e < 0) break;
+        const size = this.rng.next() < 0.4 ? 3 : 2; this.eaux[e] = size; this.er[e] = AST_R[size]; this.ehp[e] = size * 2.5; this.esec[e] = ORE_TAG;
+      }
+    } else if (k === 7) {                                                     // comet crossing
+      const c = this.spawnEnt(Kind.Comet, x, y, 0, 0);
+      if (c >= 0) { const dx = this.sx - x, dy = this.sy - y, l = Math.hypot(dx, dy) + 1e-6; this.evx[c] = dx / l * 70; this.evy[c] = dy / l * 70; this.ea[c] = Math.atan2(dy, dx); this.ehp[c] = 1e9; this.et[c] = 0; }
+    } else if (k === 8) {                                                     // nomad fleet: a slow convoy
+      for (let i = 0; i < 4; i++) { const h = this.spawnEnt(Kind.Hauler, x + i * 22, y + (i & 1) * 12, 12, 2); if (h >= 0) this.eseed[h] = i; }
+    } else if (k === 9 && this.mega <= 0 && this.warn === 0) this.triggerEvent(6);
+  }
+
+  /** Jump arrival / new system: clear the local world, keep the ship and the run. */
+  enterSystem(): void {
+    for (let e = 0; e < MAX_E; e++) this.ek[e] = Kind.None;
+    this.blife.fill(0); this.mlife.fill(0); this.scl.fill(0); this.caches.clear();
+    this.nLoaded = 0; this.lastSx = this.lastSy = 0x7fffffff; this.spawnCd = 8; this.frIdx = -1;
+    this.sx = this.spx = -260; this.sy = this.spy = -40; this.svx = 30; this.svy = 0; this.sa = this.spa = 0; this.sw = 0;
+    this.cruise = false; this.jumpT = 0; this.scanP = 0; this.scanIdx = -1; this.nPoi = 0; this.poiDone.fill(0); this.nScan = 0;
+    this.invuln = Math.max(this.invuln, 2); this.warn = 0;
+    this.nPl = planetsNear(this.sx, this.sy, 380, this.pl, this.time);
+  }
+  setPoi(i: number, x: number, y: number, kind: number, seed: number): void {
+    if (i >= MAX_POI) return;
+    this.poiX[i] = x; this.poiY[i] = y; this.poiK[i] = kind; this.poiS[i] = seed; this.poiDone[i] = 0; this.nPoi = Math.max(this.nPoi, i + 1);
+  }
   /** Band changes are edge-triggered and animate at climbRate bands per second; rings at Mid chip the hull. */
   private updateAltitude(S: ShipDef, inp: number): void {
     const nb = S.altitudeBands, lo = nb >= 3 ? -1 : 0, hi = nb >= 2 ? 1 : 0;
@@ -464,6 +584,13 @@ export class Sim {
     this.eband[i] = want;
     const rate = (kind === Kind.Boss ? 0.6 : kind === Kind.Rammer || kind === Kind.Drone ? 2.2 : 1.4) * DT, dz = want - this.ez[i];
     this.ez[i] = Math.abs(dz) <= rate ? want : this.ez[i] + Math.sign(dz) * rate;
+  }
+
+  /** Trade: add (or with negative n remove) units of a commodity, bounded by the hold. Returns units actually moved. */
+  moveCargo(c: number, n: number): number {
+    const room = this.ship.cargo - this.cargoUsed;
+    const m = n > 0 ? Math.min(n, Math.floor(room)) : -Math.min(-n, this.cargoBy[c]);
+    this.cargoBy[c] += m; this.cargoUsed += m; return m;
   }
 
   /** Hive: launch a wingman from a bay while hostiles are near, one per cooldown, up to ShipDef.wingmen. */
@@ -516,7 +643,9 @@ export class Sim {
     d *= 1 - (type === Dmg.Kinetic ? S.resist.kinetic : type === Dmg.Thermal ? S.resist.thermal : S.resist.em);
     d = Math.max(d * 0.25, d - S.armor);
     if (this.shield > 0) { const a = Math.min(this.shield, d); this.shield -= a; d -= a; if (a > 0) this.sparks(this.sx - nx * 2, this.sy - ny * 2, 3, Col.Cyan, 30); }
-    if (S.cargoSoak > 0 && this.cargoUsed > 0 && d > 0) { const soak = Math.min(d * S.cargoSoak, this.cargoUsed * 3); d -= soak; this.cargoLost += soak / 3; this.cargoUsed = Math.max(0, this.cargoUsed - soak / 3); }
+    if (S.cargoSoak > 0 && this.cargoUsed > 0 && d > 0) { const soak = Math.min(d * S.cargoSoak, this.cargoUsed * 3); d -= soak; this.cargoLost += soak / 3; this.cargoUsed = Math.max(0, this.cargoUsed - soak / 3); this.trimCargo(); }
+    if (this.cruise) { this.cruise = false; this.emit(Ev.Cruise, this.sx, this.sy, 0); }
+    if (this.jumpT > 0 && d > 2) this.jumpT = Math.min(this.jumpLen, this.jumpT + 0.8);   // hits stall the jump drive
     this.hp -= d; this.lastHit = this.time; this.hitFlash = 1;
     this.hitAng = Math.atan2(-ny, -nx); this.hitT = 1;
     this.emit(Ev.ShipHit, this.sx, this.sy, d);
@@ -529,6 +658,11 @@ export class Sim {
     }
   }
 
+  /** Keep per-commodity counts within the (fractional) hold total after cargo soaks damage. */
+  private trimCargo(): void {
+    let tot = 0; for (let c = 0; c < 6; c++) tot += this.cargoBy[c];
+    while (tot > Math.ceil(this.cargoUsed)) { let m = 0; for (let c = 1; c < 6; c++) if (this.cargoBy[c] > this.cargoBy[m]) m = c; this.cargoBy[m]--; tot--; }
+  }
   /** Damage with no direction (heat, radiation): no knockback. */
   hurt(d: number, type: number): void { const vx = this.svx, vy = this.svy, sh = this.shake; this.damageShip(d, 0, 0, type); this.svx = vx; this.svy = vy; this.shake = Math.min(this.shake, sh + 0.3); }
   cargoLost = 0;
@@ -572,18 +706,19 @@ export class Sim {
   }
 
   private loadSector(sx: number, sy: number): void {
-    const home = sx === 0 && sy === 0;
+    const home = sx === 0 && sy === 0 && SYS.x === 0 && SYS.y === 0;
+    if (!inSystem(sx, sy)) return;                                           // deep space between systems: empty
     if (hasStation(sx, sy)) {
       const sr = this.srng;
-      sr.s = (Math.imul(sx, 0x2545f491) ^ Math.imul(sy, 0x9e3779b1) ^ 0xabcdef) >>> 0;
+      sr.s = (Math.imul(sx + SYS.x, 0x2545f491) ^ Math.imul(sy + SYS.y, 0x9e3779b1) ^ 0xabcdef) >>> 0;
       const stx = home ? -175 : sx * SECTOR + (sr.next() - 0.5) * SECTOR * 0.5, sty = home ? -105 : sy * SECTOR + (sr.next() - 0.5) * SECTOR * 0.5;
       this.clearOfPlanet(sx, sy, stx, sty, 45);
       const e = this.spawnEnt(Kind.Station, this.clrX, this.clrY, 0, 0);
       if (e >= 0) { this.esec[e] = ((sx & 0xffff) << 16) | (sy & 0xffff); this.eseed[e] = sr.next(); this.ea[e] = 0; }
     }
-    if (!home && hash2(sx * 5 + 1, sy * 11 + 3) < 0.42) return;
+    if (!home && hash2((sx + SYS.x) * 5 + 1, (sy + SYS.y) * 11 + 3) < 0.42) return;
     const r = this.srng;
-    r.s = (Math.imul(sx, 0x9e3779b1) ^ Math.imul(sy, 0x85ebca6b) ^ 0x1234567) >>> 0;
+    r.s = (Math.imul(sx + SYS.x, 0x9e3779b1) ^ Math.imul(sy + SYS.y, 0x85ebca6b) ^ 0x1234567) >>> 0;
     const cx = home ? -95 : sx * SECTOR + (r.next() - 0.5) * SECTOR * 0.55;
     const cy = home ? 70 : sy * SECTOR + (r.next() - 0.5) * SECTOR * 0.55;
     const fieldR = 70 + r.next() * 70, n = 8 + Math.floor(r.next() * 9);
@@ -619,9 +754,9 @@ export class Sim {
   /** Derelict cargo cache: a persistent pile of scrap (and sometimes ammo / repair) that is never respawned once seeded. */
   private seedCache(sx: number, sy: number): void {
     const key = ((sx & 0xffff) << 16) | (sy & 0xffff);
-    if (this.caches.has(key) || (sx === 0 && sy === 0) || hash2(sx * 13 + 7, sy * 7 + 1) < 0.72) return;
+    if (this.caches.has(key) || (sx === 0 && sy === 0) || !inSystem(sx, sy) || hash2((sx + SYS.x) * 13 + 7, (sy + SYS.y) * 7 + 1) < 0.72) return;
     this.caches.add(key);
-    const r = this.srng; r.s = (Math.imul(sx, 0x1b873593) ^ Math.imul(sy, 0xcc9e2d51) ^ 0x5bd1e995) >>> 0;
+    const r = this.srng; r.s = (Math.imul(sx + SYS.x, 0x1b873593) ^ Math.imul(sy + SYS.y, 0xcc9e2d51) ^ 0x5bd1e995) >>> 0;
     this.clearOfPlanet(sx, sy, sx * SECTOR + (r.next() - 0.5) * SECTOR * 0.6, sy * SECTOR + (r.next() - 0.5) * SECTOR * 0.6, 40);
     const cx = this.clrX, cy = this.clrY;
     for (let i = 0; i < 6; i++) {
@@ -733,9 +868,10 @@ export class Sim {
       const f = this.spawnEnt(Kind.Freighter, this.sx + Math.cos(h) * 40, this.sy + Math.sin(h) * 40, 0, 0);
       if (f >= 0) { this.frIdx = f; this.eaux[f] = h; this.ea[f] = h; this.emit(Ev.Boss, this.ex[f], this.ey[f], 2); }
     }
+    if (this.cruise || this.jumpT > 0) { this.spawnCd = Math.max(this.spawnCd, 1); }
     if (this.spawnCd > 0) return;
     const ph = this.phase, mult = (ph === 0 ? 0.3 : ph === 1 ? 0.85 : ph === 2 ? 1.4 : 0.4) * (this.objType === 4 && this.stationNear ? 1.6 : this.objType === 5 && this.frIdx >= 0 ? 1.3 : 1);
-    const target = Math.min(Math.round((3 + Math.min(this.time / 45, 7)) * mult * (this.hard ? 1.25 : 1)), 14);
+    const target = Math.min(Math.round((3 + Math.min(this.time / 45, 7)) * mult * (this.hard ? 1.25 : 1) * this.pressure), 14);
     if (this.nEnemy >= target) { this.spawnCd = 1; return; }
     this.spawnCd = ph === 2 ? 2.2 : 3.4;
     const a = this.rng.next() * TAU, dist = 190 + this.rng.next() * 50;
@@ -791,6 +927,7 @@ export class Sim {
       this.objSetup();
       const tier = this.objTier;
       const bonus = 25 + 10 * tier; this.scrap += bonus; this.scrapTotal += bonus; this.emit(Ev.Objective, this.sx, this.sy, tier);
+      if (type === 4) this.emit(Ev.Saved, this.sx, this.sy, 1);
     }
   }
 
@@ -927,7 +1064,7 @@ export class Sim {
   }
 
   /** Free repair + refill while docked. */
-  serviceShip(): void { this.hp = this.hpMax; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.boostE = this.boostMax; this.emit(Ev.Dock, this.sx, this.sy, 1); }
+  serviceShip(): void { this.cruise = false; this.hp = this.hpMax; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.boostE = this.boostMax; this.emit(Ev.Dock, this.sx, this.sy, 1); }
 
   // ===================================================================== spatial hash + entities
   private rebuildHash(): void {
@@ -1221,7 +1358,7 @@ export class Sim {
     if (k === Kind.Asteroid) {
       const size = this.eaux[j];
       this.explode(x, y, 0.5 + size * 0.35, Col.Gray);
-      if (byPlayer) { this.objProgress(2, 1); this.score += 20 * size; if (size >= 2 && this.rng.next() < 0.5) this.spawnScrap(x, y, 1); }
+      if (byPlayer) { this.objProgress(2, 1); this.score += 20 * size; if (this.esec[j] === ORE_TAG) this.spawnScrap(x, y, 3 * size); else if (size >= 2 && this.rng.next() < 0.5) this.spawnScrap(x, y, 1); }
       if (size > 1) {
         for (let c = 0; c < 2; c++) {
           const a = this.rng.next() * TAU;
@@ -1239,6 +1376,7 @@ export class Sim {
     }
     if (k === Kind.Comet) { this.ek[j] = k; this.ehp[j] = 1e9; return; }          // comets cannot be destroyed
     if (k === Kind.Hauler) {
+      if (byPlayer) this.emit(Ev.Hauler, x, y, 1);
       this.explode(x, y, 2.4, Col.Amber); this.spawnScrap(x, y, 8, 0);
       if (byPlayer) this.score += 60;
       return;

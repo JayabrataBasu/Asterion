@@ -40,3 +40,15 @@
 - Content: fly over planets at High, atmosphere cover/drag/heat at Low, rings at Mid, asteroid canyons, band-limited storms, band-aware enemy AI.
 - Report with side-by-side screenshots: `docs/VERTICALITY.md`. Not tuned around; awaiting a keep/kill decision.
 - Soak watchdog now asserts no hang (< 500 ms) and a sane average step (< 2 ms) instead of counting wall-clock hiccups.
+
+## M5 + M6 — exploration layer and living galaxy (one galaxy model, one commit)
+- `src/sim/galaxy.ts`: 40 seeded systems on a 100 ly chart (home HELIX at the centre), each with a star type, owning faction, hazards and 2-5 points of interest; four procedurally named factions with a relation matrix; per-system stability, wealth, piracy and supply of six commodities. Deterministic from the seed, bounded, serialised into the save (validated on load).
+- World: sectors hash with a per-system salt and end at 6 sectors from the origin (deep space beyond). Defaults stay the original endless field, so legacy tests are unchanged.
+- Travel: galaxy chart (`N`, fog of war, jump-range ring, system info + news), jump drive (`jumpRange`, `jumpCharge`, fuel by distance; hits stall the charge), time-compressed cruise (`Y`; x4 speed, no weapons, dropped by hostiles, wells, damage and POIs), wormholes as free shortcuts.
+- Fuel: burns with thrust (x2 boosting, x1.5 cruising); dry tanks leave 30% thrust; refuel at stations or scoop by skimming a gas giant (Low band when vertical is on).
+- Scanning: hold `Q` near a body or POI (`scanRate`, `sensorRange`, Sensors module); nebulae and ion storms halve the speed unless the hull ignores them (Sextant). First surveys give survey data, a catalogue name stamped with your pilot tag (typed into the sky) and the scan view. Survey % per system; full surveys count toward unlocks.
+- Points of interest: distress beacons (salvage, sometimes bait), derelict capital hulls (set piece; salvage, logs, fragments), pulsars (radiation, EM resist helps), rogue planets, wormholes, ion storms (shields off, HUD glitches), ore-rich belts (extra scrap), comets, nomad fleets, megastructures (triggers the sky-crossing set piece), quiet signals (fragments). Untouched POIs show as dim signal bearings at the screen edge before anything is visible.
+- Hazards gate ships: radiation (EM resist), hot stars (heat dissipation), ion storms (shields), gravity wells, debris.
+- Living galaxy: a tick every 3 minutes of play applies data-driven events (pirate surges, booms, famine, blockades, lost freighters, faction fire, truces, rumours). Kills, destroyed haulers, trade and defended stations move the numbers; piracy scales enemy pressure in that system.
+- News ticker (dim, top row, `K` skips, option to disable). Station services: sell survey data, refuel, trade goods (buy/sell per commodity, hold = `cargo`; Mule's cargo soaks damage). Ship logs: the optional mystery of the quiet lanes in 8 fragments, plus recovered derelict logs.
+- Game-over summary adds ship, distance, survey % and notable events of the run.

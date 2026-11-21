@@ -4,6 +4,8 @@ import { PerfHud } from './dev/perfHud';
 import { mountTuner } from './dev/tune';
 import { RATING_KEYS, ROSTER, bar, derive, shipById } from './sim/ships';
 import { UNLOCKS, unlockOf } from './sim/unlocks';
+import { Explorer } from './game/explore';
+import { COMMODITIES, FRAGMENTS, Galaxy, STAR_NAME } from './sim/galaxy';
 import { FrameBuilder } from './gfx/draw';
 import { panel, panelOrigin } from './gfx/menu';
 import { Renderer } from './gfx/renderer';
@@ -67,19 +69,31 @@ function bank(): void {
   st.maxTier = Math.max(st.maxTier, sim.objTier);
   writeSave(save);
 }
+/** Sectors seen in the current system (sector map + typed arrivals). */
+const visited = new Set<number>();
+/** Galaxy seed: kept in the save (random on first launch); daily mode uses the date and does not persist. */
+function galaxySeed(): number {
+  const g = save.galaxy as { seed?: unknown } | null;
+  return typeof g?.seed === 'number' && Number.isInteger(g.seed) ? g.seed : (Math.random() * 1e9) >>> 0;
+}
+let explorer!: Explorer;
 function newRun(): void {
   applyShip();
+  explorer = new Explorer(sim, fb, save, save.daily ? dailySeed() : galaxySeed(), !save.daily);
+  explorer.onToast = s => say(s);
+  explorer.onArrive = () => { visited.clear(); arrive(); };
   banked.kills = banked.bosses = banked.scrap = 0;
   sim.scrap = save.scrap; sim.vert = save.vert;
   sim.hard = save.hard;
   sim.reset(urlSeed !== null ? parseInt(urlSeed, 10) >>> 0 : save.daily ? dailySeed() : (Math.random() * 1e9) >>> 0);
+  explorer.enter(0, true);
   fb.hiScore = save.hi; deathHandled = false; lastHp = sim.hp; arrive();
 }
 let deathHandled = false;
 newRun();
 
 // ---------------------------------------------------------------- state machine
-type State = 'menu' | 'play' | 'pause' | 'shop' | 'controls' | 'map' | 'hangar' | 'logs' | 'chart';
+type State = 'menu' | 'play' | 'pause' | 'shop' | 'controls' | 'map' | 'hangar' | 'logs' | 'chart' | 'trade';
 let state: State = 'menu';
 let sel = 0;
 let waitingBind = -1;           // index into ACTIONS while capturing a key
@@ -233,6 +247,7 @@ function currentMenu(): MenuDef {
     case 'shop': return shopMenu();
     case 'hangar': return hangarMenu();
     case 'logs': return logsMenu();
+    case 'trade': return tradeMenu();
     default: return optionsMenu();
   }
 }
@@ -247,7 +262,8 @@ function tryDock(): void {
 
 // ---------------------------------------------------------------- input
 function menuKey(code: string): void {
-  if (state === 'map') { if (code === 'Escape' || code === 'KeyN' || code === 'Enter' || code === 'KeyP') state = 'play'; return; }
+  if (state === 'map') { if (code === 'Tab') state = 'chart'; else if (code === 'Escape' || code === 'KeyN' || code === 'Enter' || code === 'KeyP') state = 'play'; return; }
+  if (state === 'chart') { chartKey(code); return; }
   if (waitingBind >= 0) {
     if (code !== 'Escape') { save.binds[ACTIONS[waitingBind]] = code; fb.dockKey = keyLabel(bindOf('dock')); writeSave(save); }
     waitingBind = -1; return;
@@ -260,6 +276,7 @@ function menuKey(code: string): void {
     case 'Enter': case 'Space': activate(); break;
     case 'Escape': case 'KeyP':
       if (state === 'shop') leaveShop();
+      else if (state === 'trade') { state = 'shop'; sel = 0; bank(); }
       else if (state === 'controls' || state === 'logs') { state = back; sel = 0; }
       else if (state === 'hangar') { state = 'menu'; sel = 1; }
       else if (state === 'pause') state = 'play';
@@ -279,7 +296,8 @@ function onKey(code: string): void {
   }
   if (code === 'Escape' || code === 'KeyP') { if (sim.alive) { state = 'pause'; sel = 0; } return; }
   if (code === bindOf('dock')) { tryDock(); return; }
-  if (code === 'KeyN') { state = 'map'; return; }
+  if (code === 'KeyN') { state = 'chart'; explorer.chartSel = explorer.galaxy.st.current; return; }
+  if (code === 'KeyK') { explorer.skipTicker(); return; }
   switch (code) {
     case 'Tab': mouseAim = !mouseAim; say('mouse aim ' + (mouseAim ? 'on' : 'off')); persist(); break;
     case 'KeyV': sim.assist = !sim.assist; say('flight assist ' + (sim.assist ? 'on' : 'off')); persist(); break;
@@ -437,12 +455,119 @@ function pollInput(): number {
   if (q.has('hud') && q.get('hud') === '0') settings.hud = false;
   if (q.has('perf')) { settings.perf = true; perf.show(true); }
   if (q.has('evt')) sim.debugEvtP = parseFloat(q.get('evt')!);
+  if (q.has('sys')) explorer.enter(Math.max(0, Math.min(39, parseInt(q.get('sys')!, 10) | 0)), false);
+  if (q.has('setpiece')) { const k = ({ beacon: 0, derelict: 1, pulsar: 2, wormhole: 4, signal: 10 } as Record<string, number>)[q.get('setpiece')!] ?? 1; sim.setPoi(0, sim.sx + (k === 1 ? 40 : 70), sim.sy + (k === 1 ? 70 : 20), k, 0.3); sim.poiDone[0] = 1; }
   if (q.has('scanview')) { fb.scanR = -1; fb.scanEnv = 1; fb.scanText = 'T=184K  CH4 62% H2 31% NH3 5%  MASS 4.1E26 KG  RINGS: ICE  '; }
   if (q.has('ship')) sim.setShip(shipById(q.get('ship')!));
   if (q.has('vert')) sim.vert = q.get('vert') !== '0';
   if (q.has('tune')) mountTuner(sim, id => sim.setShip(shipById(id)));
 }
 function finishTutQuiet(): void { tut = 99; }
+
+// ---------------------------------------------------------------- galaxy chart (M5): fog of war, jump range, system info
+const G_SEL_L = gi('['), G_SEL_R = gi(']'), G_STAR = gi('*'), G_Q = gi('?');
+function chartMove(dx: number, dy: number): void {
+  const g = explorer.galaxy, cur = g.systems[explorer.chartSel];
+  let best = -1, bd = 1e9;
+  for (const s of g.systems) {
+    if (s.id === cur.id || g.known(s.id) === 0) continue;
+    const ex = s.x - cur.x, ey = s.y - cur.y, along = ex * dx + ey * dy, off = Math.abs(ex * dy - ey * dx);
+    if (along <= 0) continue;
+    const score = along + off * 2;
+    if (score < bd) { bd = score; best = s.id; }
+  }
+  if (best >= 0) explorer.chartSel = best;
+}
+function drawChart(): void {
+  const g = explorer.galaxy, bt = renderer.glyphs, W = 70, H = 30, here = g.here, sel = g.systems[explorer.chartSel];
+  const lines: string[] = []; for (let i = 0; i < H; i++) lines.push(' '.repeat(W - 4));
+  const title = 'G A L A X Y   C H A R T', footer = 'ARROWS SELECT   ENTER JUMP   TAB SYSTEM MAP   N/ESC CLOSE';
+  const wide = renderer.cols >= 150;
+  panel(bt, renderer.cols, renderer.rows, title, lines, -1, footer, 0, wide ? -30 : 0);
+  const o = panelOrigin(renderer.cols, renderer.rows, title, lines, footer); o.x += wide ? -30 : 0;
+  const px = (x: number): number => o.x + 4 + Math.round(x / 100 * (W - 8)), py = (y: number): number => renderer.rows - 1 - (o.y + 3 + Math.round((100 - y) / 100 * (H - 1)));
+  const range = sim.ship.jumpRange * (1 + 0.1 * sim.up[8]);
+  for (let j = 0; j < 72; j++) { const a = j / 72 * Math.PI * 2; bt.put(px(here.x + Math.cos(a) * range), py(here.y + Math.sin(a) * range), G_DOT, 0.15, 0.35, 0.35, 1); }
+  for (const s of g.systems) {
+    const k = g.known(s.id); if (k === 0) continue;
+    const c = px(s.x), r = py(s.y), inR = g.dist(here.id, s.id) <= range;
+    if (s.id === here.id) bt.put(c, r, G_AT, 0.4, 2.0, 1.4, 1);
+    else if (k === 2) bt.put(c, r, G_DIA, inR ? 0.5 : 0.25, inR ? 1.4 : 0.7, inR ? 1.6 : 0.8, 1);
+    else bt.put(c, r, inR ? G_STAR : G_Q, 0.5, 0.6, 0.65, 1);
+    if (s.id === sel.id) { bt.put(c - 1, r, G_SEL_L, 1.6, 1.4, 0.4, 1); bt.put(c + 1, r, G_SEL_R, 1.6, 1.4, 0.4, 1); }
+  }
+  if (!wide) return;
+  const d = g.dist(here.id, sel.id), known = g.known(sel.id) === 2, q = g.st.sys[sel.id];
+  const pct = (v: number): string => '#'.repeat(Math.round(v * 10)) + '.'.repeat(10 - Math.round(v * 10));
+  const info = [
+    known ? sel.name : 'UNKNOWN SIGNAL', known ? STAR_NAME[sel.star] : '', known ? g.factions[sel.faction] : '', '',
+    'DISTANCE ' + d.toFixed(1) + ' LY' + (d > range ? '  (OUT OF RANGE)' : ''), 'JUMP FUEL ' + Galaxy.jumpFuel(d, sim.ship.fuelBurn) + '  (HAVE ' + Math.floor(sim.fuel) + ')',
+    known ? 'SURVEY ' + Math.round(g.survey(sel.id, sel.id === here.id ? explorer.bodies : 40) * 100) + '%' : '', '',
+    'STABILITY ' + pct(q.stability), 'WEALTH    ' + pct(q.wealth), 'PIRACY    ' + pct(q.piracy), '',
+    'NEWS', ...g.st.news.slice(-5).map(n => n.slice(0, 44)),
+  ];
+  panel(bt, renderer.cols, renderer.rows, 'S Y S T E M', info, -1, '@ YOU   ◆ VISITED   * IN RANGE   ? SIGNAL', 0, 44);
+}
+function chartKey(code: string): void {
+  switch (code) {
+    case 'ArrowLeft': case 'KeyA': chartMove(-1, 0); break;
+    case 'ArrowRight': case 'KeyD': chartMove(1, 0); break;
+    case 'ArrowUp': case 'KeyW': chartMove(0, 1); break;
+    case 'ArrowDown': case 'KeyS': chartMove(0, -1); break;
+    case 'Enter': case 'Space': { const r = explorer.jump(); say(r); if (sim.jumpT > 0) state = 'play'; break; }
+    case 'Tab': state = 'map'; break;
+    case 'Escape': case 'KeyN': case 'KeyP': state = 'play'; break;
+  }
+}
+
+// ---------------------------------------------------------------- station services + trade + logs (M5/M6)
+const boughtAt = new Int8Array(6).fill(-1);
+stationExtras = (): Item[] => {
+  const g = explorer.galaxy, q = g.st.sys[g.st.current], dataVal = Math.floor(save.data * (0.5 + 0.3 * q.wealth));
+  const fuelNeed = Math.ceil(sim.fuelMax - sim.fuel), fuelCost = Math.ceil(fuelNeed * 0.35);
+  return [
+    { label: 'SELL SURVEY DATA ... ' + (save.data | 0) + ' -> ' + dataVal + ' SCRAP', act: () => {
+      if (save.data <= 0) { say('no survey data'); return; }
+      sim.scrap += dataVal; save.stats.survey += save.data | 0; save.data = 0; say('survey data sold for ' + dataVal + ' scrap'); bank();
+    } },
+    { label: 'REFUEL ............. ' + (fuelNeed <= 0 ? 'FULL' : fuelCost + ' SCRAP'), act: () => {
+      if (fuelNeed <= 0) { say('tanks full'); return; }
+      const can = Math.min(fuelNeed, Math.floor(sim.scrap / 0.35)); if (can <= 0) { say('not enough scrap'); return; }
+      sim.fuel += can; sim.scrap -= Math.ceil(can * 0.35); say('refuelled'); bank();
+    } },
+    { label: 'TRADE GOODS ........ HOLD ' + Math.round(sim.cargoUsed) + '/' + sim.ship.cargo, act: () => { state = 'trade'; sel = 0; } },
+  ];
+};
+function tradeMenu(): MenuDef {
+  const g = explorer.galaxy;
+  const items: Item[] = COMMODITIES.map((name, c) => {
+    const buy = g.price(c, false), sell = g.price(c, true);
+    const doBuy = (): void => {
+      if (sim.scrap < buy) { say('not enough scrap'); return; }
+      if (sim.moveCargo(c, 1) < 1) { say('hold full'); return; }
+      sim.scrap -= buy; g.onTrade(c, -1); boughtAt[c] = g.st.current;
+    };
+    const doSell = (): void => {
+      if (sim.moveCargo(c, -1) > -1) { say('none in the hold'); return; }
+      sim.scrap += sell; g.onTrade(c, 1);
+      if (boughtAt[c] !== g.st.current) { save.stats.delivered++; }
+    };
+    return { label: (name + '            ').slice(0, 12) + 'BUY ' + String(buy).padStart(3) + '   SELL ' + String(sell).padStart(3) + '   HOLD ' + sim.cargoBy[c], act: doBuy, adj: (d: number) => (d > 0 ? doBuy() : doSell()) };
+  });
+  items.push({ label: 'BACK', act: () => { state = 'shop'; sel = 0; bank(); } });
+  return { title: 'T R A D E   -   ' + g.here.name + '   -   SCRAP ' + sim.scrap, items, tone: 1, footer: 'ENTER / RIGHT  BUY     LEFT  SELL     HOLD ' + Math.round(sim.cargoUsed) + '/' + sim.ship.cargo };
+}
+logsMenu = (): MenuDef => {
+  const g = explorer.galaxy, items: Item[] = [];
+  const wrap = (s: string): void => { for (let i = 0; i < s.length; i += 64) items.push({ label: s.slice(i, i + 64) }); };
+  items.push({ label: 'THE QUIET LANES  ' + g.st.frags.length + '/' + FRAGMENTS.length + ' FRAGMENTS' });
+  for (const f of g.st.frags.slice().sort((a, b) => a - b)) { items.push({ label: '' }); wrap(FRAGMENTS[f]); }
+  if (g.st.logs.length) { items.push({ label: '' }, { label: 'RECOVERED LOGS' }); for (const l of g.st.logs.slice(-5)) wrap(l); }
+  if (items.length === 1) items.push({ label: 'NOTHING RECOVERED YET. QUIET SIGNALS AND DERELICTS KEEP RECORDS.' });
+  items.push({ label: '' }, { label: 'BACK', act: () => { state = back; sel = 0; } });
+  return { title: 'S H I P   L O G S', items, footer: 'ESC  BACK' };
+};
+
 /** Hangar: ship list on the left, stat card on the right, rotating glyph preview of the highlighted hull between them. */
 function drawHangar(m: MenuDef, labels: string[], cx: number, cy: number, t: number): void {
   const wide = renderer.cols >= 150;
@@ -521,7 +646,6 @@ function nearHostile(): boolean {
   return false;
 }
 
-const visited = new Set<number>();
 const planetScratch = new Float32Array(PLANET_STRIDE);
 const G_DIA = gi('◆'), G_RING = gi('○'), G_AT = gi('@'), G_DOT = gi('·');
 function drawMap(): void {
@@ -594,6 +718,7 @@ function frame(now: number): void {
     if (!sim.alive && sim.deadT > 1.5) sim.reset(5);
     pollPad();
   } else pollPad();
+  explorer.frame(dt, playing);
   audio.update(sim, dt, playing);
   const simMs = performance.now() - s0;
   const alpha = acc / DT;
@@ -618,10 +743,11 @@ function frame(now: number): void {
   fb.fx = settings.reduceFx ? 0.35 : 1; fb.showLayers = layersOn;
   const np = planetsNear(cx, cy, renderer.cols * 0.5 + 80, view, sim.time + alpha * DT);
   fb.view = view; fb.nView = np;
-  fb.build(cx, cy, alpha, t, settings.hud && state !== 'menu' && state !== 'hangar' && state !== 'logs' && state !== 'chart');
+  fb.build(cx, cy, alpha, t, settings.hud && state !== 'menu' && state !== 'hangar' && state !== 'logs' && state !== 'chart' && state !== 'trade');
   if (rosterView) drawRoster(cx, cy, t);
   if (state !== 'play') {
     if (state === 'map') drawMap();
+    else if (state === 'chart') drawChart();
     else {
       const m = currentMenu(), labels = m.items.map(i => i.label);
       if (state === 'hangar') drawHangar(m, labels, cx, cy, t);
@@ -643,7 +769,7 @@ function frame(now: number): void {
   velBuf[0] = sim.svx / vl; velBuf[1] = sim.svy / renderer.aspect / vl; velBuf[2] = Math.max(0, Math.min(1, (spd - 110) / 80)) * fxk;
   renderer.render({ neb: nebAmt, ecl: sim.ecl, mega: sim.mega, vel: velBuf, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: Math.max(sim.hitFlash * fxk, sim.alive && sim.hp < 30 ? 0.22 + 0.16 * Math.sin(t * 7) * fxk : 0),
-    streakX: sim.svx, streakY: sim.svy, streak, combat, tint, flare: sim.flare * fxk, storm: sim.storm * fxk, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
+    streakX: sim.svx, streakY: sim.svy, streak, combat, tint, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 
   perf.frame(dt * 1000, performance.now() - t0, simMs);
   governor();

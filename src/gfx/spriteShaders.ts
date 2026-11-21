@@ -187,6 +187,21 @@ float fHive(vec2 q, float thr, out float h, out float mt, out vec3 dp){
   return min(dH, dFl);
 }
 
+// ---- derelict capital hull (set piece): ~230 units of broken plating with a few lit windows. Ship stays tiny beside it.
+float fDerelict(vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float dB = min(sdBox(q - vec2(-6.0, 0.0), vec2(88.0, 10.0)) - 1.0, sdTri(q, vec2(112.0, 0.0), vec2(80.0, 10.5), vec2(80.0, 0.0)));
+  float dS = sdBox(q - vec2(-28.0, 12.5), vec2(34.0, 4.0)) - 0.6;
+  float dT = sdBox(q - vec2(10.0, 15.0), vec2(6.0, 4.5)) - 0.4;
+  float dE = sdBox(q - vec2(-100.0, 0.0), vec2(9.0, 13.0)) - 0.8;
+  float dH = min(min(dB, dS), min(dT, dE));
+  float gap = sdBox(q - vec2(32.0 + 3.0 * sin(q.y * 0.9), 0.0), vec2(2.5, 20.0));       // the hull is broken in two
+  dH = max(dH, -gap);
+  h = max(max(bev(-dB, 4.0), bev(-dS, 2.0) * 1.2), max(bev(-dT, 1.5) * 1.3, bev(-dE, 3.0)));
+  dp = vec3(dB, dS, min(dT, dE));
+  mt = 0.0;
+  return dH;
+}
+
 // ---- wingman drone (Hive): tiny friendly dart
 float fWing(vec2 q, float thr, out float h, out float mt, out vec3 dp){
   float dB = sdTri(q, vec2(3.5, 0.0), vec2(-2.5, 2.4), vec2(-1.5, 0.0));
@@ -353,6 +368,7 @@ float field(int ty, vec2 q, float thr, out float h, out float mt, out vec3 dp){
   if (ty == 19) return fMagpie(q, thr, h, mt, dp);
   if (ty == 20) return fHive(q, thr, h, mt, dp);
   if (ty == 21) return fWing(q, thr, h, mt, dp);
+  if (ty == 22) return fDerelict(q, thr, h, mt, dp);
   return fStation(q, thr, h, mt, dp);
 }
 
@@ -436,6 +452,16 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     emis += smoothstep(0.4, 0.0, abs(bay - 1.6 * gS)) * vec3(1.8, 0.9, 0.2) * gS;
     emis += smoothstep(0.9, 0.0, length((q - vec2(-11.4, 1.6)) / vec2(0.8, 1.0))) * vec3(1.6, 0.9, 0.3) * (0.4 + thr);
     spec = 0.4;
+  } else if (ty == 22) {               // derelict: dark plating rows, scorch, tiny lit windows
+    float m = min(dp.x, min(dp.y, dp.z));
+    col = m == dp.x ? vec3(0.34, 0.34, 0.37) : (m == dp.y ? vec3(0.28, 0.27, 0.30) : vec3(0.22, 0.21, 0.23));
+    col *= 1.0 - 0.45 * panel(q.x * 0.22, 0.06) - 0.3 * panel(q.y * 0.35 + 0.2, 0.06);
+    col *= 0.6 + 0.4 * vn2(q * 0.08 + seed * 20.0);
+    vec2 wc = floor(q * vec2(0.5, 0.6));
+    float win = step(0.94, hash12(wc + seed * 13.0)) * step(abs(q.y), 9.0) * step(-90.0, q.x) * step(q.x, 80.0);
+    emis += win * vec3(1.7, 1.25, 0.6) * (0.6 + 0.4 * sin(uTime * 0.7 + wc.x));
+    emis += smoothstep(3.0, 0.0, abs(q.x - 32.0)) * vec3(0.6, 0.2, 0.05) * (0.4 + 0.3 * sin(uTime * 3.0));   // the break still glows
+    spec = 0.25;
   } else if (ty == 21) {               // wingman drone: friendly mint
     col = vec3(0.30, 0.80, 0.60);
     emis += smoothstep(1.5, 0.0, length(q - vec2(-1.8, 0.0))) * vec3(0.3, 1.6, 1.0);

@@ -38,6 +38,7 @@ const ACCENT = [0.3, 2.0, 1.35];
 /** Nose / tail distances (world units) per entity kind for the heading marks; null = no heading. */
 const NOSE: ([number, number] | null)[] = [null, [6.5, 4.6], [9.8, 8.7], [7.8, 7.6], null, null, null, [19, 21], [10, 7.4], [5, 5.5], [6, 7.8], [6.6, 5.2], [8.4, 9.7], null, [8.4, 9.7], [2.5, 2]];
 /** Player hull nose / tail by sprite art id. */
+const SIG_LABEL = ['B', 'D', 'P', 'R', 'W', 'S', 'O', 'C', 'N', 'M', '?'];
 const PNOSE: Record<number, [number, number]> = { 0: [10.8, 7.9], 14: [10.8, 9.2], 15: [9.7, 8.6], 16: [6.5, 11.6], 17: [8.6, 10.3], 18: [6.5, 2.2], 19: [7.6, 7.2], 20: [5.5, 8.4] };
 const EVT_NAME = ['', 'COMET INBOUND', 'METEOR SHOWER', 'SOLAR FLARE', 'ION STORM', 'ECLIPSE', 'MEGASTRUCTURE IN VIEW'];
 const OBJ_LABEL = ['HOSTILES', 'SCRAP', 'ASTEROIDS', 'SECONDS', 'DEFEND STATION (STAY CLOSE)', 'ESCORT THE FREIGHTER (STAY CLOSE)'];
@@ -57,7 +58,9 @@ export class FrameBuilder {
   camX = 0; camY = 0; alpha = 0;
   fx = 1; private rtime = 0;
   prompt = ''; dockKey = 'E'; hiScore = 0; showReticle = true;
-  private sScrap = ''; private sObj = ''; private sWave = ''; private sMsl = ''; private sOver1 = ''; private sOver2 = ''; private sOver3 = '';
+  private sScrap = ''; private sObj = ''; private sWave = ''; private sMsl = ''; private sOver1 = ''; private sOver2 = ''; private sOver3 = ''; private sOver4 = '';
+  /** Notable events of the run (game-over summary), shared with the exploration layer. */
+  notable: string[] = [];
   private cols = 0; private rows = 0; private asp = 2;
   private thrS = 0.1;
   private hudT = -9; private sStat1 = ''; private sStat2 = ''; private sScore = ''; private sKills = '';
@@ -134,12 +137,15 @@ export class FrameBuilder {
     this.particles();
     this.rings();
     this.scanView();
+    this.pois(time);
     this.marks(time);
     this.scraps(time);
     this.lifeEnts(time);
     this.discoveries(time);
+    this.announcements(time);
     if (this.showLayers) this.layersLegend();
-    if (showHud) this.hud(time);
+    const h0 = this.r.glyphs.n;
+    if (showHud) { this.hud(time); this.signals(); if (this.sim.alive) this.exploreHud(time); this.glitch(h0); }
   }
 
   // ------------------------------------------------------------------ sprites (SDF layer)
@@ -322,7 +328,8 @@ export class FrameBuilder {
       const o = k * PLANET_STRIDE, x = s.pl[o], y = s.pl[o + 1], R = s.pl[o + 2];
       const key = (Math.round(x) * 73856093) ^ (Math.round(y / 8) * 19349663);
       if (this.named.has(key) || Math.hypot(x - this.camX, y - this.camY) - R > this.cols * 0.45) continue;
-      this.named.add(key); this.nameKey = key; this.nameT = time; this.nameStr = this.designate(x, y, R); this.nameX = x; this.nameY = y; this.nameR = R;
+      this.named.add(key); const nm = this.designate(x, y, R); if (!nm) continue;
+      this.nameKey = key; this.nameT = time; this.nameStr = nm; this.nameX = x; this.nameY = y; this.nameR = R;
       break;
     }
     const age = time - this.nameT;
@@ -369,6 +376,118 @@ export class FrameBuilder {
     const lines = ['LAYER GLYPH BUDGET', 'BACKGROUND  . , : ;   (DIM ONLY)  BLUE', 'BODIES      ~ - = # % : . * \' @ * +  GREEN', 'SHIPS       SHAPE-MATCHED, HEAVY  RED', 'BOLTS       PLAYER - / | \\  ENEMY o', 'PLAYER      ACCENT • (MINT)'];
     for (let i = 0; i < lines.length; i++) this.r.glyphs.text(lines[i], 2, 8 + i, 0.8, 1.2, 1.0, 1);
   }
+
+  // ------------------------------------------------------------------ exploration HUD + POI visuals (M5/M6)
+  sysName = ''; sunTint: [number, number, number] = [1, 1, 1]; surveyPct = 0; data = 0;
+  scanTargetI = -1; scanTargetX = 0; scanTargetY = 0;
+  ticker = ''; tickerT = 0;
+  readonly sigX = new Float32Array(6); readonly sigY = new Float32Array(6); readonly sigK = new Int8Array(6); nSig = 0;
+  private annStr = ''; private annT = -1; private annStyle = 0; private annPending = false;
+  /** Type a line into the sky: style 0 = system arrival (top centre), 1 = a discovery near the scanned body. */
+  announce(text: string, style: number): void { this.annStr = text; this.annStyle = style; this.annPending = true; }
+  private announcements(time: number): void {
+    if (this.annPending) { this.annPending = false; this.annT = time; }
+    if (this.annT < 0 || this.annStr.length === 0) return;
+    const age = time - this.annT;
+    if (age > 7) { this.annT = -1; return; }
+    const n = Math.min(this.annStr.length, Math.floor(age * 22)), fade = Math.min(1, (7 - age) / 1.5);
+    let row = 9, col = (this.cols - this.annStr.length) >> 1;
+    if (this.annStyle === 1 && this.scanR > 0) {
+      row = Math.round(this.rows - 1 - this.cy(this.scanY + this.scanR + 8));
+      col = Math.round(this.cx(this.scanX)) - (this.annStr.length >> 1);
+    }
+    row = Math.max(9, Math.min(this.rows - 10, row)); col = Math.max(2, Math.min(this.cols - this.annStr.length - 2, col));
+    const k = this.annStyle === 0 ? 1.3 : 1;
+    this.r.glyphs.text(this.annStr.slice(0, n), col, row, 0.45 * fade * k, 1.35 * fade * k, 1.15 * fade * k, 2);
+    if (n < this.annStr.length && Math.sin(time * 20) > 0) this.r.glyphs.text('_', col + n, row, 0.5, 1.3, 1.1, 2);
+  }
+
+  /** POI set pieces in glyphs: derelict capital hull (SDF), pulsar beams, wormhole swirl, beacon / signal blips. */
+  private pois(time: number): void {
+    const s = this.sim, b = this.r.glyphs, sp = this.r.sprites, gl = this.r.glows;
+    for (let p = 0; p < s.nPoi; p++) {
+      const x = s.poiX[p], y = s.poiY[p], k = s.poiK[p];
+      if (!this.visible(x, y, k === 1 ? 130 : k === 2 ? 60 : 30)) continue;
+      if (k === 1) { sp.z = -0.5; sp.add(x, y, s.poiS[p] * 6.28, 118, 22, s.poiS[p], 0, 0, 1, 0.9); sp.z = 0; continue; }
+      if (k === 2) {                                                       // pulsar: a hot point with two sweeping beams
+        const a = time * 2.6 + s.poiS[p] * 6, pulse = 0.5 + 0.5 * Math.sin(time * 18);
+        gl.add(x, y, 10 + 6 * pulse, 0.6 + pulse, 0.7 + pulse, 1.4 + pulse);
+        b.put(this.cx(x), this.cy(y), G.at, 2.4, 2.4, 2.8, 1);
+        for (let j = 1; j < 40; j++) for (let sgn = -1; sgn <= 1; sgn += 2) {
+          const bx = x + Math.cos(a) * j * 3 * sgn, by = y + Math.sin(a) * j * 3 * sgn, f = (1 - j / 40) * (0.4 + 0.6 * pulse);
+          b.put(this.cx(bx), this.cy(by), LINE8[dir8(a)], 1.0 * f + 0.2, 1.5 * f + 0.25, 2.6 * f + 0.4, 2);
+        }
+        continue;
+      }
+      if (k === 4) {                                                       // wormhole: rotating rings of glyphs
+        for (let ring = 0; ring < 3; ring++) {
+          const rad = 5 + ring * 4, n = 10 + ring * 8;
+          for (let j = 0; j < n; j++) {
+            const a = (j / n) * TAU + time * (1.4 - ring * 0.4) * (ring & 1 ? -1 : 1), f = 0.5 + 0.5 * Math.sin(a * 3 + time * 4);
+            b.put(this.cx(x + Math.cos(a) * rad), this.cy(y + Math.sin(a) * rad), ring === 0 ? G.star : G.dotA, (0.6 + f) * 0.8, 0.3 * f, (1.2 + f) * 0.9, 2);
+          }
+        }
+        gl.add(x, y, 14, 0.4, 0.1, 0.6);
+        continue;
+      }
+      if (s.poiDone[p]) continue;
+      const blink = Math.sin(time * 3 + p) > 0 ? 1 : 0.4;                 // beacons and signals: a slow blip
+      b.put(this.cx(x), this.cy(y), k === 0 ? G.dia : G.ring, 0.4 * blink, 1.4 * blink, 1.2 * blink, 1);
+    }
+  }
+
+  /** Signal bearings: dim arrows at the screen edge toward untouched points of interest, before anything is visible. */
+  private signals(): void {
+    const s = this.sim, b = this.r.glyphs, cxm = this.cols * 0.5, cym = this.rows * 0.5;
+    for (let i = 0; i < this.nSig; i++) {
+      const dx = this.sigX[i] - this.camX, dy = (this.sigY[i] - this.camY) / this.asp;
+      if (Math.abs(dx) < cxm - 2 && Math.abs(dy) < cym - 2) continue;
+      const t = Math.min((cxm - 3) / Math.max(1e-3, Math.abs(dx)), (cym - 9) / Math.max(1e-3, Math.abs(dy)));
+      const ex = cxm + dx * t, ey = cym + dy * t, d = Math.hypot(this.sigX[i] - s.sx, this.sigY[i] - s.sy);
+      const k = Math.max(0.25, 1 - d / (s.sensorR * 6));
+      b.put(ex, ey, LINE8[dir8(Math.atan2(dy, dx))], 0.3 * k, 0.9 * k, 0.8 * k, 1);
+      const lab = SIG_LABEL[this.sigK[i]] ?? '?';
+      b.put(ex - Math.sign(dx), ey - Math.sign(dy), glyphOfCode(lab.charCodeAt(0)), 0.25 * k, 0.7 * k, 0.65 * k, 1);
+    }
+  }
+
+  /** Ion storms glitch the HUD: scramble a few HUD glyphs (allocation-free, in place). */
+  private glitch(from: number): void {
+    const s = this.sim, st = Math.max(s.storm, s.zoneStorm);
+    if (st < 0.3) return;
+    const d = this.r.glyphs.data, n = this.r.glyphs.n;
+    for (let i = from; i < n; i++) if (hash2(i * 7 + (s.tick >> 2), i) < 0.06 * st) d[i * 8 + 2] = 33 + ((i * 13 + s.tick) % 60);
+  }
+
+  private exploreHud(time: number): void {
+    const s = this.sim, bt = this.r.glyphs, cols = this.cols, rows = this.rows;
+    // fuel + survey + system under the main box
+    this.bar(s.fuel <= 0 ? 'FUEL!' : 'FUEL ', s.fuel / s.fuelMax, 9, s.fuel < s.fuelMax * 0.2 ? 1.8 : 1.3, s.fuel < s.fuelMax * 0.2 ? 0.4 : 1.1, 0.3, 12);
+    if (this.sysName) {
+      if (time - this.sysT > 0.5) { this.sysT = time; this.sSys = this.sysName + '  SURVEY ' + Math.round(this.surveyPct * 100) + '%  DATA ' + (this.data | 0); }
+      bt.text(this.sSys, 3, 10, 0.45, 0.85, 0.8);
+    }
+    if (s.cruise) bt.text('>> CRUISE <<', (cols - 12) >> 1, rows - 7, 0.4, 1.4, 1.2, 1);
+    if (s.jumpT > 0) {
+      const f = 1 - s.jumpT / Math.max(0.01, s.jumpLen), w = 30, x0 = (cols - w) >> 1;
+      bt.text('JUMP DRIVE', (cols - 10) >> 1, rows - 8, 0.7, 1.2, 1.8, 1);
+      for (let i = 0; i < w; i++) bt.put(x0 + i, 6, i < f * w ? G.hash : G.dotA, i < f * w ? 0.6 : 0.15, i < f * w ? 1.0 : 0.2, i < f * w ? 2.0 : 0.3, 1);
+      const al = this.alpha, px = s.spx + (s.sx - s.spx) * al, py = s.spy + (s.sy - s.spy) * al, rad = 14 - 10 * f;   // charge ring tightening
+      for (let j = 0; j < 36; j++) { const a = j / 36 * TAU + time * 3; this.r.glyphs.put(this.cx(px + Math.cos(a) * rad), this.cy(py + Math.sin(a) * rad), G.colon, 0.5 + f, 0.8 + f, 1.6, 2); }
+    }
+    if (s.scanP > 0 && this.scanTargetI >= 0) {
+      const w = 20, x0 = (cols - w) >> 1, cy = rows - 1 - (rows - 6);
+      bt.text('SCANNING', (cols - 8) >> 1, rows - 6 - 1 + 0, 0.4, 1.3, 1.1, 1);
+      for (let i = 0; i < w; i++) bt.put(x0 + i, cy, i < s.scanP * w ? G.hash : G.dotA, i < s.scanP * w ? 0.4 : 0.12, i < s.scanP * w ? 1.6 : 0.2, i < s.scanP * w ? 1.3 : 0.2, 1);
+      const tx = this.cx(this.scanTargetX), ty = this.cy(this.scanTargetY);       // bracket the target
+      bt.put(tx - 3, ty, G.lb, 0.4, 1.4, 1.2, 2); bt.put(tx + 3, ty, G.rb, 0.4, 1.4, 1.2, 2);
+    }
+    if (this.ticker && this.tickerT > 0) {                                 // news ticker: dim, scrolls once, skippable (K)
+      const msg = '// ' + this.ticker + ' //', x = Math.round(cols - (9 - this.tickerT) * (cols + msg.length) / 9);
+      for (let i = 0; i < msg.length; i++) { const c = x + i; if (c >= 2 && c < cols - 34) bt.put(c, 0, glyphOfCode(msg.charCodeAt(i)), 0.32, 0.42, 0.45, 1); }
+    }
+  }
+  private sysT = -9; private sSys = '';
 
   private dark = 0; private arm = 0; private bay = 0;
   /** Ship-specific live state for the hull shader (one float): barrel flash, petal unfold, hold fill, dark fade, arm reach, bays. */
@@ -547,8 +666,8 @@ export class FrameBuilder {
     const s = this.sim, bt = this.r.glyphs, cols = this.cols, rows = this.rows;
     this.refreshHud(time);
     bt.text(BOX_TOP, 1, 0, 0.25, 0.5, 0.65);
-    for (let r = 1; r <= 6; r++) bt.text(BOX_MID, 1, r, 0.25, 0.5, 0.65);
-    bt.text(BOX_BOT, 1, 7, 0.25, 0.5, 0.65);
+    for (let r = 1; r <= 10; r++) bt.text(BOX_MID, 1, r, 0.25, 0.5, 0.65);
+    bt.text(BOX_BOT, 1, 11, 0.25, 0.5, 0.65);
     const hpv = s.hp / s.hpMax, sm = s.ship.shieldMax;
     this.bar('HULL ', hpv, 1, hpv > 0.5 ? 0.4 : 1.8, hpv > 0.25 ? 1.7 : 0.4, 0.5);
     this.bar('BOOST', s.boostE / s.boostMax, 2, 0.4, 1.2, 2.0);
@@ -590,22 +709,25 @@ export class FrameBuilder {
       bt.text(TITLE, (cols - TITLE.length) >> 1, (rows >> 1) - 10, 1.0 * a, 2.4 * a, 3.2 * a, 2);
     }
     if (!s.alive && s.deadT > 1.0) {
-      const w = 46, x0 = (cols - w) >> 1, y0 = (rows >> 1) - 5;
+      const w = 60, x0 = (cols - w) >> 1, y0 = (rows >> 1) - 7, nn = Math.min(4, this.notable.length);
       const pad = ' '.repeat(w);
-      for (let r = 0; r < 10; r++) bt.text(pad, x0, y0 + r, 0, 0, 0, 1);
+      for (let r = 0; r < 12 + nn; r++) bt.text(pad, x0, y0 + r, 0, 0, 0, 1);
       if (s.deadT < 1.1 || this.sOver1.length === 0) {
         const acc = s.shots > 0 ? Math.round(100 * s.hits / s.shots) : 0, m = (s.time / 60) | 0, sec = (s.time | 0) % 60;
         this.sOver1 = this.sScore + '    BEST ' + String(Math.max(this.hiScore, s.score)).padStart(7, '0');
         this.sOver2 = 'TIME ' + m + ':' + String(sec).padStart(2, '0') + '   KILLS ' + s.kills + '   ACC ' + acc + '%';
         this.sOver3 = 'SCRAP COLLECTED ' + s.scrapTotal + (s.score > this.hiScore ? '   NEW BEST!' : '');
+        this.sOver4 = s.ship.name + '   DISTANCE ' + (s.dist / 1000).toFixed(1) + ' KU   SURVEY ' + Math.round(this.surveyPct * 100) + '%';
       }
       const ctr = (m: string): number => x0 + ((w - m.length) >> 1);
       bt.text(LOST, ctr(LOST), y0 + 1, 1.6, 0.35, 0.3);
       bt.text(this.sOver1, ctr(this.sOver1), y0 + 3, 1.3, 1.1, 0.5);
       bt.text(this.sOver2, ctr(this.sOver2), y0 + 5, 0.7, 1.0, 1.1);
       bt.text(this.sOver3, ctr(this.sOver3), y0 + 6, 1.2, 1.0, 0.4);
+      bt.text(this.sOver4, ctr(this.sOver4), y0 + 7, ACCENT[0] * 0.8, ACCENT[1] * 0.8, ACCENT[2] * 0.8);
+      for (let i = 0; i < nn; i++) { const l = this.notable[this.notable.length - nn + i]; bt.text(l, ctr(l), y0 + 9 + i, 0.5, 0.75, 0.8); }
       const bl = 0.6 + 0.4 * Math.sin(time * 5);
-      bt.text(RELAUNCH, ctr(RELAUNCH), y0 + 8, 0.5 * bl + 0.3, 1.0 * bl + 0.3, 1.2 * bl + 0.3);
+      bt.text(RELAUNCH, ctr(RELAUNCH), y0 + 10 + nn, 0.5 * bl + 0.3, 1.0 * bl + 0.3, 1.2 * bl + 0.3);
     }
   }
 
