@@ -65,9 +65,9 @@ describe('vertical collisions', () => {
     expect(pass(1)).toBe(true); expect(pass(0)).toBe(false);
   });
   it('low band near a planet drags, heats and lowers the signature', () => {
-    const s = new Sim(1); s.vert = true; s.invuln = 1e9; s.hp = 1e9; s.sx = s.spx = 190 - 46 - 8; s.sy = s.spy = -60; s.svx = 0; s.svy = 50;
-    s.szBand = -1; s.sz = -1;
-    const t = new Sim(1); t.vert = true; t.invuln = 1e9; t.hp = 1e9; t.sx = t.spx = 190 - 46 - 8; t.sy = t.spy = -60; t.svx = 0; t.svy = 50;
+    const s = new Sim(1); s.vert = true; s.invuln = 1e9; s.hp = 1e9; s.sx = s.spx = 190 + 46 + 11.5; s.sy = s.spy = -60; s.svx = 0; s.svy = 50;
+    s.szBand = -1; s.sz = -1; s.ek.fill(0);   // no rocks or ships near the start: this test is about the atmosphere only
+    const t = new Sim(1); t.vert = true; t.invuln = 1e9; t.hp = 1e9; t.sx = t.spx = 190 + 46 + 11.5; t.sy = t.spy = -60; t.svx = 0; t.svy = 50; t.ek.fill(0);
     for (let i = 0; i < 20; i++) { s.input = 0; s.step(); t.input = 0; t.step(); }
     const sig = s.sigNow, heat = s.heat;
     expect(sig).toBeLessThan(t.sigNow * 0.6); expect(heat).toBeGreaterThan(t.heat); expect(Math.abs(s.svy)).toBeLessThan(Math.abs(t.svy));

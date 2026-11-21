@@ -118,3 +118,11 @@
 - Camera: restored the original follow (my boost easing let the ship drift to the screen edge and snap back when flying up).
 - Enemy palettes: each hostile has its own bright hue (crimson drone, amber gunship, purple minelayer, red/steel dreadnought, icy-blue sniper, toxic-yellow splitter, red-orange rammer); drone drawn larger. Magpie body and claw made bolder.
 - `?roster=2` shows every enemy and object side by side.
+
+## v4.0-alpha.6 (physicality)
+- Solid bodies: ships, enemies, stations and rocks now collide at the size they are drawn (body radius per kind; the smaller `er` stays the bullet hitbox). The player's body radius follows its hull art.
+- Swept collision: the ship's whole path each tick is tested, so boost and cruise speed can no longer tunnel through small rocks.
+- Weight: impacts exchange momentum by mass (restitution 0.4). Heavy rocks and the dreadnought barely move; light rocks and drones are flung. Hits throw sparks and shake the screen; stations are immovable.
+- Planet surface is resolved after the move, so the ship can never end a tick inside a planet (it used to overlap by up to ~2.6 units at boost speed).
+- Enemy-vs-enemy and enemy-vs-rock separation uses the same body sizes.
+- New tests: test/collision.test.ts (7). Flight-trace fixture regenerated (collisions legitimately change it); one planet-atmosphere test re-placed to match the new body size.
