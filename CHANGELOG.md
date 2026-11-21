@@ -80,3 +80,12 @@
 - Ships draw 1.35x larger than before (hitboxes unchanged), nose marks and engine glows scaled to match.
 - Star cells keep the nebula behind them instead of a black box.
 - Debug `?fire=1` holds fire (for bolt screenshots).
+
+## v3.3 — visual overhaul: ships, hyperspace boost, all hulls open
+- Boost (Shift) is a hyperspace tunnel: star-lines rush outward from a vanishing point ahead of the ship, ramping in over ~0.3 s and out over ~0.5 s. Built in polar coordinates with a continuous outward phase, so lines slide smoothly instead of reshuffling. Reduced FX keeps 40%.
+- Hull legibility: every hull has a vivid signature colour (Wren white/red, Needle ice cyan, Anvil industrial orange, Sextant teal + gold, Mule khaki with saturated containers, Shade violet, Magpie rust/teal/yellow, Hive honey), flatter lighting so the whole silhouette reads, solid colour tiles behind hull glyphs, and a dark outline ring.
+- Hull glyphs: edges use shape glyphs only (no `@ & $ % " ~` noise); interior fill ramp `. : - = + * #`.
+- Shade is fully visible unless running dark.
+- Glyph cells (stars, planet materials, streaks) borrow the surrounding backdrop instead of drawing black boxes; planet night sides fall back to the plain ramp instead of a field of material glyphs.
+- All ships unlocked from the start; unlock goals remain as achievements in the hangar.
+- Debug `?boost=1` holds boost.

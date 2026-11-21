@@ -32,6 +32,7 @@ canvas.addEventListener('webglcontextrestored', () => location.reload());
 let lost = false;
 
 const save = loadSave();
+save.unlocked = UNLOCKS.map(u => u.id);   // every hull is open from the start (owner call); unlock goals stay as achievements
 const urlSeed = new URLSearchParams(location.search).get('seed');
 const sim = new Sim(urlSeed !== null ? parseInt(urlSeed, 10) >>> 0 : (Math.random() * 1e9) >>> 0);
 const fb = new FrameBuilder(sim, renderer);
@@ -57,7 +58,8 @@ function applyHc(): void {
 function dailySeed(): number { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
 /** Typed arrival: the scene writes itself in outward from the centre on launch and on first entry to a sector. */
 let revealT = -1;
-let dbgFire = false;   // ?fire=1: hold fire, for screenshots of bolts
+let hyperAmt = 0; const hyperBuf: [number, number, number] = [0, 0, 0];
+let dbgIn = 0;   // ?fire=1 / ?boost=1: held inputs, for screenshots
 /** Auto camera zoom (off in debug / screenshot sessions unless ?zoom=1). */
 function arrive(): void { revealT = 0; }
 /** Bank upgrades, scrap and lifetime stats (deltas since the last bank this run). */
@@ -441,7 +443,6 @@ function pollInput(): number {
   const debug = demo || ff > 0 || q.has('x') || q.has('y') || q.has('hud') || q.has('perf') || q.has('play');
   if (debug) { state = 'play'; finishTutQuiet(); }   // screenshots: no timing-dependent zoom
   for (let i = 0; i < ff * 60; i++) { sim.input = demo ? autopilot() : 0; sim.step(); if (!sim.alive && sim.deadT > 1) sim.reset(5); }
-  if (q.has('unlockall')) { save.unlocked = UNLOCKS.map(u => u.id); }
   const qs = q.get('state'); if (qs === 'shop' || qs === 'pause' || qs === 'controls' || qs === 'map' || qs === 'hangar' || qs === 'chart' || qs === 'logs') { state = qs; sim.scrap = 140; }
   if (q.has('event')) { sim.triggerEvent(Math.min(6, Math.max(0, ({ comet: 1, meteors: 2, flare: 3, storm: 4, eclipse: 5, mega: 6 } as Record<string, number>)[q.get('event')!] ?? (parseInt(q.get('event')!, 10) | 0)))); sim.warnT = parseFloat(q.get('evwarn') ?? '0.05'); }
   if (q.has('hp')) sim.hp = parseFloat(q.get('hp')!);
@@ -455,7 +456,7 @@ function pollInput(): number {
   if (q.has('y')) { sim.sy = sim.spy = parseFloat(q.get('y')!); }
   if (q.has('obj')) { sim.objTier = parseInt(q.get('obj')!, 10) | 0; sim.objKills = 0; sim.step(); }
   if (q.has('hud') && q.get('hud') === '0') settings.hud = false;
-  dbgFire = q.get('fire') === '1';
+  dbgIn = (q.get('fire') === '1' ? In.Fire : 0) | (q.get('boost') === '1' ? In.Boost | In.Thrust : 0);
   if (q.has('perf')) { settings.perf = true; perf.show(true); }
   if (q.has('evt')) sim.debugEvtP = parseFloat(q.get('evt')!);
   if (q.has('modules')) { sim.up[1] = 3; sim.up[6] = 1; sim.up[8] = 2; sim.refreshShip(); sim.invuln = 0; }
@@ -587,7 +588,7 @@ let rosterView = new URLSearchParams(location.search).has('roster');
 function drawRoster(cx: number, cy: number, t: number): void {
   for (let i = 0; i < ROSTER.length; i++) {
     const d = ROSTER[i], wx = cx - 66 + (i % 4) * 44, wy = cy + (i < 4 ? 22 : -18);
-    renderer.sprites.add(wx, wy, Math.PI / 2 + Math.sin(t * 0.5 + i) * 0.15, d.artSize, d.art, d.art === 0 ? 0.5 : 0.6, 0, 0.9, 0.72, 1);
+    renderer.sprites.add(wx, wy, Math.PI / 2 + Math.sin(t * 0.5 + i) * 0.15, d.artSize, d.art, d.art === 0 ? 0.5 : d.art === 18 ? 0 : 0.6, 0, 0.9, 0.72, 1);
     const row = Math.round(renderer.rows * 0.5 - (wy - cy) / renderer.aspect) + 10;
     renderer.glyphs.text(d.name, Math.round(renderer.cols * 0.5 + (wx - cx)) - (d.name.length >> 1), row, 0.6, 1.2, 1.0, 1);
   }
@@ -673,7 +674,7 @@ function frame(now: number): void {
 
   const s0 = performance.now();
   if (playing) {
-    sim.input = pollInput() | (dbgFire ? In.Fire : 0);
+    sim.input = pollInput() | dbgIn;
     if (hitStop > 0) { hitStop -= dt; acc = 0; }          // brief freeze on kills
     else while (acc >= DT) { sim.step(); acc -= DT; }
     if (sim.kills > lastKills) hitStop = settings.reduceFx ? 0 : 0.045;
@@ -734,12 +735,14 @@ function frame(now: number): void {
   if (toastT > 0) { toastT -= dt; renderer.glyphs.text(toast, 2, renderer.rows - 2, 1.2, 1.2, 0.6, 1); }
   const spd = Math.sqrt(sim.svx * sim.svx + sim.svy * sim.svy);
   const streak = Math.max(0, Math.min(1, (spd - 85) / 60));
+  hyperAmt += ((sim.alive && sim.boosting && state === 'play' ? 1 : 0) - hyperAmt) * (1 - Math.exp(-dt * (sim.boosting ? 4 : 2.5)));
+  hyperBuf[0] = Math.cos(sim.sa); hyperBuf[1] = Math.sin(sim.sa); hyperBuf[2] = hyperAmt * (settings.reduceFx ? 0.4 : 1);
   const fxk = settings.reduceFx ? 0.35 : 1;
   if (revealT >= 0) { revealT += dt * (settings.reduceFx ? 2 : 1); if (revealT * 240 > renderer.cols + renderer.rows * 2) revealT = -1; }
   if (fb.scanEnv > 0 && state === 'play' && sim.scanP <= 0 && !scanHold) fb.scanEnv = Math.max(0, fb.scanEnv - dt * 0.5);
   renderer.render({ ecl: sim.ecl, mega: sim.mega, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: Math.max(sim.hitFlash * fxk, sim.alive && sim.hp < 30 ? 0.22 + 0.16 * Math.sin(t * 7) * fxk : 0),
-    streakX: sim.svx, streakY: sim.svy, streak, combat, tint, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
+    streakX: sim.svx, streakY: sim.svy, streak: streak * (1 - hyperAmt), hyper: hyperBuf, combat, tint, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 
   perf.frame(dt * 1000, performance.now() - t0, simMs);
   governor();

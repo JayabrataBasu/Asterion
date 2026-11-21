@@ -34,6 +34,7 @@ uniform int uNP; uniform vec4 uPA[8]; uniform vec4 uPB[8]; uniform vec4 uPC[8]; 
 uniform float uG[24];    // glyph table, see GLYPHS in renderer.ts
 uniform float uNeb; uniform float uSun; uniform vec3 uTint; uniform vec3 uStreak; uniform vec3 uShipL; uniform float uFlare; uniform float uStorm;
 uniform vec3 uSunTint; uniform float uEcl; uniform float uMega; uniform float uCombat;
+uniform vec3 uHyper;     // boost tunnel: xy heading (world), z amount 0..1
 out vec4 o;
 ${NOISE}
 const vec3 L = vec3(0.568, 0.5165, 0.640);
@@ -251,6 +252,31 @@ void main(){
     }
   }
 
+  // ---- hyperspace: on boost, star-lines rush outward from a vanishing point ahead of the ship.
+  // Polar rays with a continuous outward phase, so lines slide smoothly (no per-cell reshuffle).
+  if (uHyper.z > 0.01) {
+    vec2 vp = uRes * 0.5 + vec2(uHyper.x, uHyper.y / uAspect) * uRes.y * 0.22;
+    vec2 d = (cell + 0.5 - vp) * vec2(1.0, uAspect);
+    float r = length(d), ang = atan(d.y, d.x);
+    const float NR = 150.0;
+    float fa = (ang / 6.28318 + 0.5) * NR, ai = floor(fa);
+    float hr = hash12(vec2(ai, 3.1));
+    float off = abs(fract(fa) - 0.5) * 6.28318 / NR * r;               // distance from the ray centre, in world units
+    if (hr > 0.72 && off < 0.5) {
+      float sp = 0.7 + 1.3 * hash12(vec2(ai, 7.7));
+      float ph = fract(log(r + 2.0) * 1.6 - uTime * sp * (0.6 + 1.6 * uHyper.z) + hr * 13.0);
+      float len = 0.06 + 0.30 * uHyper.z;
+      if (ph < len && r > 6.0) {
+        float k = ph / len;                                               // 0 tail .. 1 head (outer end)
+        float br = uHyper.z * (0.15 + 0.8 * k * k) * smoothstep(8.0, 40.0, r);
+        rgb = rgb * (1.0 - 0.35 * uHyper.z) + mix(vec3(0.35, 0.55, 1.2), vec3(1.2, 1.3, 1.6), k) * br;
+        float a = mod(ang + 3.14159265, 3.14159265);
+        glyph = (a < 0.3927 || a > 2.7489) ? G_DASH : a < 1.1781 ? G_SL : a < 1.9635 ? G_BAR : G_BS;
+      }
+    }
+    rgb += vec3(0.10, 0.18, 0.45) * uHyper.z * exp(-length((cell + 0.5 - vp) * vec2(1.0, uAspect)) / 30.0);   // tunnel glow at the vanishing point
+  }
+
   // ---- far ringed giant (eclipse event)
   if (uEcl > 0.0 && gdist < gR * 2.3) {
     float ra = 0.35, ca = cos(ra), sa = sin(ra);
@@ -344,7 +370,7 @@ void main(){
       }
       float lum = dot(col, vec3(0.2126, 0.7152, 0.0722));
       rgb = col * resolve;
-      glyph = resolve > 0.5 && lum > 0.012 ? matGlyph(type, n, sc, lum, cell) : 0.0;
+      glyph = resolve > 0.5 && lum > 0.05 ? matGlyph(type, n, sc, lum, cell) : 0.0;   // night side falls back to the plain ramp
       if (C.y > 0.0) glyph = 0.0;                                   // scan view rewrites this body as data strings (glyph pass)
       if (cov < 4 && resolve > 0.5) {                               // limb cell -> directional glyph
         vec2 nn = normalize(d + 1e-4);
@@ -459,7 +485,16 @@ void main(){
     vec3 hue = s.rgb / mx;
     hue = mix(vec3(dot(hue, vec3(0.333))), hue, 1.15);
     fg = hue * (uFgBase + uFgGain * l);
-    bg = s.rgb * uBgK * (s.a > 0.0 ? 0.3 : 1.0);
+    bg = s.rgb * uBgK;
+    if (s.a > 0.0) {                                  // glyph cell: borrow the backdrop from a plain neighbour (no black box, no filled slab)
+      vec3 acc = vec3(0.0); float na = 0.0;
+      for (int i = 0; i < 4; i++) {
+        ivec2 o4 = i == 0 ? ivec2(-2, 0) : i == 1 ? ivec2(2, 0) : i == 2 ? ivec2(0, 2) : ivec2(0, -2);
+        vec4 nb = texelFetch(uScene, clamp(cell + o4, ivec2(0), uCells - 1), 0);
+        if (nb.a <= 0.0) { acc += nb.rgb; na += 1.0; }
+      }
+      bg = (na > 0.0 ? acc / na : min(s.rgb * 0.25, vec3(0.05))) * uBgK;
+    }
   }
   if (ma.a <= 0.0) {                                  // dark halo around sprites so ships separate from the backdrop
     float h = 0.0;
@@ -467,7 +502,7 @@ void main(){
     h += texelFetch(uMA, max(cell - ivec2(1, 0), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
     h += texelFetch(uMA, min(cell + ivec2(0, 1), uCells - 1), 0).a > 0.0 ? 1.0 : 0.0;
     h += texelFetch(uMA, max(cell - ivec2(0, 1), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
-    float dim = 1.0 - 0.6 * min(1.0, h);            // dim (not blank) the cells around ships so they read against anything
+    float dim = 1.0 - 0.85 * min(1.0, h);           // dark outline ring around ships so they read against anything
     bg *= dim; fg *= dim;
   }
   if (uReveal.z > 0.0) {                              // typed arrival: the scene writes itself in outward from the centre
