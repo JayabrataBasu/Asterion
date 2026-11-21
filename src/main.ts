@@ -57,6 +57,8 @@ function applyHc(): void {
 function dailySeed(): number { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
 /** Typed arrival: the scene writes itself in outward from the centre on launch and on first entry to a sector. */
 let revealT = -1;
+/** Auto camera zoom (off in debug / screenshot sessions unless ?zoom=1). */
+let zoomAuto = true;
 function arrive(): void { revealT = 0; }
 /** Bank upgrades, scrap and lifetime stats (deltas since the last bank this run). */
 const banked = { kills: 0, bosses: 0, scrap: 0 };
@@ -437,7 +439,7 @@ function pollInput(): number {
   demo = q.has('demo');
   const ff = parseFloat(q.get('ff') ?? '0');
   const debug = demo || ff > 0 || q.has('x') || q.has('y') || q.has('hud') || q.has('perf') || q.has('play');
-  if (debug) { state = 'play'; finishTutQuiet(); }
+  if (debug) { state = 'play'; finishTutQuiet(); zoomAuto = q.get('zoom') === '1'; }   // screenshots: no timing-dependent zoom
   for (let i = 0; i < ff * 60; i++) { sim.input = demo ? autopilot() : 0; sim.step(); if (!sim.alive && sim.deadT > 1) sim.reset(5); }
   if (q.has('unlockall')) { save.unlocked = UNLOCKS.map(u => u.id); }
   const qs = q.get('state'); if (qs === 'shop' || qs === 'pause' || qs === 'controls' || qs === 'map' || qs === 'hangar' || qs === 'chart' || qs === 'logs') { state = qs; sim.scrap = 140; }
@@ -616,7 +618,7 @@ function updateNeb(dt: number, x: number, y: number): void {
 /** Camera zoom linked to speed and vistas: one cell-size step, hidden by a CSS scale tween (glyphs stay glyphs). */
 let zoomLvl = 0, zoomWant = 0, zoomHold = 0, zoomTw = 0, zoomFrom = 1, zoomTo = 1, zoomPending = -1;
 function updateZoom(dt: number, spd: number): void {
-  if (settings.reduceFx) { zoomWant = 0; }
+  if (settings.reduceFx || !zoomAuto) { zoomWant = 0; }
   else {
     let vista = sim.ecl > 0 || sim.mega > 0;
     for (let k = 0; k < sim.nPl && !vista; k++) { const o = k * PLANET_STRIDE, r = sim.pl[o + 2]; if (r > 60 && Math.hypot(sim.pl[o] - sim.sx, sim.pl[o + 1] - sim.sy) < r + 160) vista = true; }

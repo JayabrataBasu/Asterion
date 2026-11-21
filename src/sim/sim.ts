@@ -821,8 +821,9 @@ export class Sim {
       }
     }
     if (this.flareT > 0) { this.flareT -= DT; this.flare = this.flareT > 0 ? Math.sin(Math.PI * (1 - this.flareT / 8)) : 0; } else this.flare = 0;
-    if (this.eclT > 0) { this.eclT -= DT; this.ecl = this.eclT > 0 ? 1 - this.eclT / 45 : 0; } else this.ecl = 0;
-    if (this.megaT > 0) { this.megaT -= DT; this.mega = this.megaT > 0 ? 1 - this.megaT / 90 : 0; } else this.mega = 0;
+    if (this.eclT > 0) { this.eclT -= this.debugEvtP > 0 ? 0 : DT;   // ?evt= freezes progress for screenshots
+      this.ecl = this.eclT > 0 ? 1 - this.eclT / 45 : 0; } else this.ecl = 0;
+    if (this.megaT > 0) { this.megaT -= this.debugEvtP > 0 ? 0 : DT; this.mega = this.megaT > 0 ? 1 - this.megaT / 90 : 0; } else this.mega = 0;
     if (this.stormT > 0) { this.stormT -= DT; this.storm = this.stormT > 0 ? Math.min(1, (10 - this.stormT) / 1.5, this.stormT / 1.5) : 0; } else this.storm = 0;
   }
 

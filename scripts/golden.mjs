@@ -104,10 +104,19 @@ async function main() {
     const shotDir = MODE === 'shots' ? (process.argv[3] ?? join(root, 'docs', 'screens')) : null;
     if (shotDir) mkdirSync(shotDir, { recursive: true });
     let fail = 0;
-    const list = MODE === 'url' || MODE === 'console' ? [['adhoc', process.argv[3]]] : Object.entries(SCENES);
+    const list = MODE === 'url' || MODE === 'console' || MODE === 'perf' ? [['adhoc', process.argv[3]]] : Object.entries(SCENES);
     for (const [name, q] of list) {
       if (only && !only.includes(name)) continue;
       const file = join(tmp, name + '.png');
+      if (MODE === 'perf') {
+        for (const [w, h] of [[1280, 720], [1920, 1080], [2560, 1440]]) {
+          const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', `--window-size=${w},${h}`,
+            `--user-data-dir=${join(tmp, 'prof')}`, '--virtual-time-budget=6000', '--dump-dom', `http://localhost:${PORT}/?${q}&perf=1`], { timeout: 180000, encoding: 'utf8' });
+          const m = /<pre id="perf"[^>]*>([^<]*)</.exec(r.stdout ?? '');
+          console.log(`--- ${w}x${h}`); console.log(m ? m[1] : '(no perf text)');
+        }
+        continue;
+      }
       if (MODE === 'console') {
         const r = spawnSync(chrome, ['--headless=new', '--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--enable-logging=stderr', '--v=0',
           `--user-data-dir=${join(tmp, 'prof')}`, '--virtual-time-budget=2000', '--dump-dom', `http://localhost:${PORT}/?${q}`], { timeout: 120000, encoding: 'utf8' });

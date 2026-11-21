@@ -59,3 +59,10 @@
 - Economy loop: scrap (kills, salvage, ore), survey data (scans, sold at stations), trade goods (price differences between systems); unlocks read lifetime stats from all of it.
 - Daily seed seeds the run and the whole galaxy (daily galaxy state is not saved). Game-over summary and the copied result line list ship, distance, survey % and notable events.
 - Wren trace re-baselined (upgrades now flow through ShipDef).
+
+## M8 — polish, performance, tests
+- Soak over every hull x 2 seeds x vertical off/on, 3 simulated minutes each, hopping galaxy systems: no NaN, bounded counts, no cyclic hash chains, bounded explosion chains, bounded galaxy state, sane step time.
+- Tests now cover ShipDef validation and budgets, Wren regression, galaxy and procedural-generation determinism, save migration and galaxy load validation, vertical-collision rules, exploration sim (scan, fuel, cruise, jump, POIs, trade), modules.
+- Golden scenes: 14 (home, fleet, shop, map, gas giant, hangar, roster of all hulls, vertical off/on, chart, derelict, eclipse, scan view, layer debug). Screenshot sessions disable the timing-dependent auto-zoom and freeze debug set-piece progress, so baselines are stable.
+- `node scripts/golden.mjs perf '<query>'` reports the perf overlay at 720p / 1080p / 1440p. DESIGN.md has the numbers and the before/after comparison.
+- Docs: DESIGN.md (v3 decisions), TUNING.md (generated: every field, range, roster value, rating, module), README controls.

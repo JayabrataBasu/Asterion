@@ -7,7 +7,9 @@ import { Rng, hash2 } from '../core/util';
  * Deterministic from the seed, bounded (fixed counts, capped lists) and serialisable (state() / constructor).
  */
 export const N_SYS = 40, N_FAC = 4, N_COM = 6, CHART = 100;
-export const TICK_S = 180;                 // a galaxy tick every three minutes of play
+export const TICK_S = 180;
+/** Upper bound on the serialised galaxy state (bounded lists keep it well under this). */
+export const MAX_SYS_STATE_BYTES = 40000;                 // a galaxy tick every three minutes of play
 export const SYS_BOUND = 6;                // sectors from a system's origin before deep space
 export const COMMODITIES = ['FOOD', 'ORE', 'FUEL CELLS', 'MEDICINE', 'PARTS', 'LUXURIES'];
 const BASE_PRICE = [12, 18, 15, 34, 26, 48];

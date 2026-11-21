@@ -45,3 +45,28 @@ Debug URL params: `?demo=1&ff=20&x=40&y=0&bloom=0&exposure=…&perf=1`
 - **Planets:** spin and cloud drift ~3.5x faster, polar auroras on terran/ice-type worlds, atmosphere rim surges with the flare.
 - **Traffic:** `Kind.Hauler` neutral convoys (1-3) in calm/lull phases; 8 scrap each; not enemies, not targeted by missiles or aim assist. `isMissileTarget()` now guards all three missile target paths (also fixed the escort Freighter being re-targetable).
 - Unverified: event pacing/difficulty, dust readability, real-GPU cost.
+
+## v3 — the expansion (M0–M8): decisions and rationale
+- **Ships are data.** `ShipDef` (src/sim/ships.ts) is the only source of per-ship numbers; the sim reads the *effective* def (`sim.ship` = `sim.base` + modules). Enemies share the schema (`ENEMY`), flattened to arrays for the hot loop. Quirks are numeric fields (ramMult, cargoSoak, darkSig, wingmen, nebulaScan) so they tune like everything else.
+- **Wren regression.** M1 proved the refactor bit-identical against a trace recorded before it (commit 4098ecb). The fixture was then re-baselined on purpose three times (M2 new defence/power mechanics, M3 event RNG, M7 modules); each is noted in test/wren.test.ts.
+- **Original art.** The old player ship was a recognisable copy of an existing starfighter; Wren was redrawn as an original swept-delta design with unchanged flight. All hull and faction/system names are generated or invented.
+- **One balance rule.** Seven 0–100 ratings on a log scale (Wren = 50) sum to a stat budget; the validator warns beyond ±15% of Wren. The roster lands at −6%…+9%.
+- **Tuning panel is HTML** (dev-only `?tune=1`, like `?perf=1`) — the one exception to "everything is a glyph", because it never appears in play.
+- **Strict ASCII visuals.** Every new effect is glyph choice, brightness, colour, density or motion: materials per matter, light family for background (ramp capped), mid weight for bodies, heavy shape-matched glyphs for ships, a mint accent only for the player, true blank-cell halos. Camera zoom is a one-cell-size step hidden by a CSS scale tween (atlases cached per size) rather than a world-to-cell rework.
+- **Verticality** is an experiment behind a flag; when off every z is 0 and every height check passes. See docs/VERTICALITY.md. Not tuned around.
+- **Galaxy** (src/sim/galaxy.ts) is cold-path, deterministic from its seed, bounded and serialised in the save. Systems salt the existing sector generator; world defaults remain the endless home field so legacy tests and the attract mode are unchanged. The living galaxy is abstract: no off-screen ships, only per-system numbers moved by a 3-minute tick and by player actions.
+- **Story stays ambient**: names, logs, a ticker and one optional mystery in eight fragments. Nothing interrupts play.
+- **Module layout.** New code lives in new files (ships.ts, unlocks.ts, galaxy.ts, game/explore.ts, dev/tune.ts); main.ts menus became item lists. Existing modules were extended in place rather than reorganised.
+
+## Keys (v3)
+W/A/D thrust/turn · S brake (reverse near standstill) · Z/C strafe · Space fire · Shift boost · F dodge · X missile · Q hold to scan · Y cruise · N galaxy chart (Tab: sector map) · E dock · R/G climb/dive (vertical mode) · K skip news · P/Esc pause.
+Debug: F3 perf · F7 CRT · F8 aberration · F9 auto-quality · F10 layer debug · B bloom · T ramp · [ ] cell size · - = backdrop.
+URL: `?tune=1 ?ship=<id> ?vert=1 ?layers=1 ?roster=1 ?unlockall=1 ?state=hangar|chart|shop|map|logs ?sys=N ?setpiece=derelict|pulsar|wormhole|beacon|signal ?event=eclipse|mega&evt=0..1 ?scanview=1 ?modules=1` plus the older ones.
+
+## Performance (M8, measured in headless Chrome with SwiftShader software GL on this machine)
+| Resolution | Cells | CPU / frame | Sim / frame | GPU (SwiftShader) now | GPU (SwiftShader) before v3 |
+|---|---|---|---|---|---|
+| 1280x720 | 157x35 | 0.41 ms | 0.12 ms | 71.9 ms | 58.6 ms |
+| 1920x1080 | 237x58 | 0.61 ms | 0.12 ms | 81.3 ms | 79.8 ms |
+| 2560x1440 | 317x80 | 0.74 ms | 0.20 ms | 121.2 ms | 150.5 ms |
+Software GL is far slower than any real GPU, so only the before/after comparison is meaningful (no clear regression). Real integrated / discrete GPU numbers still need hardware: run `?perf=1` and read the overlay (it now includes per-system sim timings). Headless sim: average step well under 1 ms across all ships (smoke + soak tests).
