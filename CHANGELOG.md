@@ -73,3 +73,10 @@
 - Cells around ships are dimmed (pre-M3) instead of blanked.
 - Wren uses its original X-wing style hull and paint again. Flight unchanged.
 - Goldens and `docs/screens` regenerated.
+
+## v3.2 — legibility
+- Removed the speed "aberration" (stars warped toward the heading above ~110 speed; per-cell star hashing made the whole field reshuffle like a ripple when thrusting) and the auto camera zoom on boost/vistas (the grid resized mid-flight).
+- Lasers are glowing SDF sprites again, larger and brighter, with a short trailing glow; enemy bolts green (colour-blind palette unchanged). Removed the black 3x3 halos around bolts and pickups.
+- Ships draw 1.35x larger than before (hitboxes unchanged), nose marks and engine glows scaled to match.
+- Star cells keep the nebula behind them instead of a black box.
+- Debug `?fire=1` holds fire (for bolt screenshots).

@@ -13,7 +13,7 @@ export interface FrameParams {
   flash: number; hit: number;
   streakX: number; streakY: number; streak: number; ship?: [number, number, number]; combat?: number; flare?: number; storm?: number; warp?: Float32Array; tint?: [number, number, number];
   /** Star colour of the current system, eclipse / megastructure progress (0 = off), heading + speed factor for star aberration. */
-  sunTint?: [number, number, number]; ecl?: number; mega?: number; vel?: [number, number, number];
+  sunTint?: [number, number, number]; ecl?: number; mega?: number;
   /** Typed-arrival reveal radius in cells (<0 = off); planet index being rewritten by the scan view (-1 none); layer debug. */
   reveal?: number; scanPlanet?: number; layers?: boolean;
 }
@@ -30,7 +30,6 @@ export class Renderer {
   readonly sprites = new SpriteBatch();
   private readonly noWarp = new Float32Array(24);
   /** Camera zoom: cell width is reduced by this many CSS px (main tweens the step with a CSS scale). */
-  zoomCss = 0;
   cols = 0; rows = 0; cwPx = 8; chPx = 16; aspect = 2; W = 0; H = 0; ox = 0; oy = 0; dpr = 1;
   drawCalls = 0; gpuMs = 0; hdr = false;
 
@@ -71,7 +70,7 @@ export class Renderer {
     this.pDown = this.prog(S.VS_FULLSCREEN, S.FS_BLOOM_DOWN);
     this.pUp = this.prog(S.VS_FULLSCREEN, S.FS_BLOOM_UP);
     this.pComp = this.prog(S.VS_FULLSCREEN, S.FS_COMPOSITE);
-    this.uScene = this.locs(this.pScene, ['uRes', 'uCam', 'uAspect', 'uTime', 'uNP', 'uPA', 'uPB', 'uPC', 'uG', 'uNeb', 'uSun', 'uStreak', 'uTint', 'uShipL', 'uFlare', 'uStorm', 'uSunTint', 'uEcl', 'uMega', 'uVel', 'uCombat']);
+    this.uScene = this.locs(this.pScene, ['uRes', 'uCam', 'uAspect', 'uTime', 'uNP', 'uPA', 'uPB', 'uPC', 'uG', 'uNeb', 'uSun', 'uStreak', 'uTint', 'uShipL', 'uFlare', 'uStorm', 'uSunTint', 'uEcl', 'uMega', 'uCombat']);
     this.uGlow = this.locs(this.pGlow, ['uRes', 'uCam', 'uAspect']);
     this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers']);
     this.uGlyph = this.locs(this.pGlyph, ['uCellPx', 'uOrigin', 'uCanvas', 'uScene', 'uAtlas', 'uBgK']);
@@ -182,7 +181,7 @@ export class Renderer {
   resize(cssW: number, cssH: number, dpr: number): void {
     
     this.dpr = dpr;
-    this.cwPx = Math.max(3, Math.round((settings.cellCss - this.zoomCss) * dpr));
+    this.cwPx = Math.max(3, Math.round(settings.cellCss * dpr));
     this.chPx = this.cwPx * 2; this.aspect = 2;
     this.W = Math.max(1, Math.round(cssW * dpr)); this.H = Math.max(1, Math.round(cssH * dpr));
     this.canvas.width = this.W; this.canvas.height = this.H;
@@ -254,9 +253,9 @@ export class Renderer {
       this.pb[i * 4] = f.planets[o + 4]; this.pb[i * 4 + 1] = f.planets[o + 5]; this.pb[i * 4 + 2] = f.planets[o + 6]; this.pb[i * 4 + 3] = f.planets[o + 7];
     }
     gl.uniform1i(u.uNP, np); gl.uniform4fv(u.uPA, this.pa); gl.uniform4fv(u.uPB, this.pb); gl.uniform4fv(u.uPC, this.pc); gl.uniform1fv(u.uG, this.G); gl.uniform3f(u.uStreak, f.streakX, f.streakY, f.streak); const sl = f.ship; gl.uniform3f(u.uShipL, sl ? sl[0] : 0, sl ? sl[1] : 0, sl ? sl[2] : 0); const tn = f.tint; gl.uniform3f(u.uTint, tn ? tn[0] : 1, tn ? tn[1] : 1, tn ? tn[2] : 1);
-    const sn = f.sunTint, ve = f.vel;
+    const sn = f.sunTint;
     gl.uniform3f(u.uSunTint, sn ? sn[0] : 1, sn ? sn[1] : 1, sn ? sn[2] : 1); gl.uniform1f(u.uEcl, f.ecl ?? 0); gl.uniform1f(u.uMega, f.mega ?? 0);
-    gl.uniform3f(u.uVel, ve ? ve[0] : 0, ve ? ve[1] : 0, ve ? ve[2] : 0); gl.uniform1f(u.uCombat, f.combat ?? 0);
+    gl.uniform1f(u.uCombat, f.combat ?? 0);
     gl.drawArrays(gl.TRIANGLES, 0, 3); this.drawCalls++;
 
     // ---- glow sprites (additive, alpha channel untouched)

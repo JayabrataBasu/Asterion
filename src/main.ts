@@ -57,8 +57,8 @@ function applyHc(): void {
 function dailySeed(): number { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); }
 /** Typed arrival: the scene writes itself in outward from the centre on launch and on first entry to a sector. */
 let revealT = -1;
+let dbgFire = false;   // ?fire=1: hold fire, for screenshots of bolts
 /** Auto camera zoom (off in debug / screenshot sessions unless ?zoom=1). */
-let zoomAuto = true;
 function arrive(): void { revealT = 0; }
 /** Bank upgrades, scrap and lifetime stats (deltas since the last bank this run). */
 const banked = { kills: 0, bosses: 0, scrap: 0 };
@@ -439,7 +439,7 @@ function pollInput(): number {
   demo = q.has('demo');
   const ff = parseFloat(q.get('ff') ?? '0');
   const debug = demo || ff > 0 || q.has('x') || q.has('y') || q.has('hud') || q.has('perf') || q.has('play');
-  if (debug) { state = 'play'; finishTutQuiet(); zoomAuto = q.get('zoom') === '1'; }   // screenshots: no timing-dependent zoom
+  if (debug) { state = 'play'; finishTutQuiet(); }   // screenshots: no timing-dependent zoom
   for (let i = 0; i < ff * 60; i++) { sim.input = demo ? autopilot() : 0; sim.step(); if (!sim.alive && sim.deadT > 1) sim.reset(5); }
   if (q.has('unlockall')) { save.unlocked = UNLOCKS.map(u => u.id); }
   const qs = q.get('state'); if (qs === 'shop' || qs === 'pause' || qs === 'controls' || qs === 'map' || qs === 'hangar' || qs === 'chart' || qs === 'logs') { state = qs; sim.scrap = 140; }
@@ -455,6 +455,7 @@ function pollInput(): number {
   if (q.has('y')) { sim.sy = sim.spy = parseFloat(q.get('y')!); }
   if (q.has('obj')) { sim.objTier = parseInt(q.get('obj')!, 10) | 0; sim.objKills = 0; sim.step(); }
   if (q.has('hud') && q.get('hud') === '0') settings.hud = false;
+  dbgFire = q.get('fire') === '1';
   if (q.has('perf')) { settings.perf = true; perf.show(true); }
   if (q.has('evt')) sim.debugEvtP = parseFloat(q.get('evt')!);
   if (q.has('modules')) { sim.up[1] = 3; sim.up[6] = 1; sim.up[8] = 2; sim.refreshShip(); sim.invuln = 0; }
@@ -608,29 +609,6 @@ function updateTint(dt: number, x: number, y: number): void {
   const k = 1 - Math.exp(-0.8 * dt);
   for (let i = 0; i < 3; i++) tint[i] += (th[i] - tint[i]) * k;
 }
-/** Camera zoom linked to speed and vistas: one cell-size step, hidden by a CSS scale tween (glyphs stay glyphs). */
-let zoomLvl = 0, zoomWant = 0, zoomHold = 0, zoomTw = 0, zoomFrom = 1, zoomTo = 1, zoomPending = -1;
-function updateZoom(dt: number, spd: number): void {
-  if (settings.reduceFx || !zoomAuto) { zoomWant = 0; }
-  else {
-    let vista = sim.ecl > 0 || sim.mega > 0;
-    for (let k = 0; k < sim.nPl && !vista; k++) { const o = k * PLANET_STRIDE, r = sim.pl[o + 2]; if (r > 60 && Math.hypot(sim.pl[o] - sim.sx, sim.pl[o + 1] - sim.sy) < r + 160) vista = true; }
-    const want = (sim.boosting && spd > 150) || vista ? 1 : 0;
-    zoomHold = want === zoomWant ? 0 : zoomHold + dt;
-    if (zoomHold > (want ? 1.0 : 2.5)) { zoomWant = want; zoomHold = 0; }
-  }
-  if (zoomTw <= 0 && zoomWant !== zoomLvl) {
-    const base = settings.cellCss, cur = base - zoomLvl, nxt = base - zoomWant;
-    if (nxt < cur) { zoomLvl = zoomWant; renderer.zoomCss = zoomLvl; resize(); zoomFrom = cur / nxt; zoomTo = 1; zoomTw = 0.6; zoomPending = -1; }
-    else { zoomFrom = 1; zoomTo = nxt / cur; zoomTw = 0.6; zoomPending = zoomWant; }
-  }
-  if (zoomTw > 0) {
-    zoomTw = Math.max(0, zoomTw - dt);
-    const u = 1 - zoomTw / 0.6, e = u * u * (3 - 2 * u);
-    canvas.style.transform = 'scale(' + (zoomFrom + (zoomTo - zoomFrom) * e).toFixed(4) + ')';
-    if (zoomTw === 0) { if (zoomPending >= 0) { zoomLvl = zoomPending; renderer.zoomCss = zoomLvl; resize(); zoomPending = -1; } canvas.style.transform = ''; }
-  }
-}
 let layersOn = new URLSearchParams(location.search).has('layers');
 const scanHold = new URLSearchParams(location.search).has('scanview');
 function nearHostile(): boolean {
@@ -665,7 +643,6 @@ function drawMap(): void {
 }
 
 const warp = new Float32Array(24);
-const velBuf: [number, number, number] = [0, 0, 0];
 /** Screen-space distortion sources: expanding shock rings from explosions and heat shimmer behind the player's engines. */
 function buildWarp(cx: number, cy: number, fx: number): Float32Array {
   warp.fill(0);
@@ -696,7 +673,7 @@ function frame(now: number): void {
 
   const s0 = performance.now();
   if (playing) {
-    sim.input = pollInput();
+    sim.input = pollInput() | (dbgFire ? In.Fire : 0);
     if (hitStop > 0) { hitStop -= dt; acc = 0; }          // brief freeze on kills
     else while (acc >= DT) { sim.step(); acc -= DT; }
     if (sim.kills > lastKills) hitStop = settings.reduceFx ? 0 : 0.045;
@@ -758,12 +735,9 @@ function frame(now: number): void {
   const spd = Math.sqrt(sim.svx * sim.svx + sim.svy * sim.svy);
   const streak = Math.max(0, Math.min(1, (spd - 85) / 60));
   const fxk = settings.reduceFx ? 0.35 : 1;
-  updateZoom(dt, spd);
   if (revealT >= 0) { revealT += dt * (settings.reduceFx ? 2 : 1); if (revealT * 240 > renderer.cols + renderer.rows * 2) revealT = -1; }
   if (fb.scanEnv > 0 && state === 'play' && sim.scanP <= 0 && !scanHold) fb.scanEnv = Math.max(0, fb.scanEnv - dt * 0.5);
-  const vl = Math.hypot(sim.svx, sim.svy / renderer.aspect) + 1e-6;
-  velBuf[0] = sim.svx / vl; velBuf[1] = sim.svy / renderer.aspect / vl; velBuf[2] = Math.max(0, Math.min(1, (spd - 110) / 80)) * fxk;
-  renderer.render({ ecl: sim.ecl, mega: sim.mega, vel: velBuf, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
+  renderer.render({ ecl: sim.ecl, mega: sim.mega, reveal: revealT >= 0 ? revealT * 240 : -1, layers: layersOn, scanPlanet: fb.scanEnv > 0.5 ? fb.scanIdx : -1, camX: cx, camY: cy, time: t, planets: view, nPlanets: np, flash: sim.flash * fxk,
     hit: Math.max(sim.hitFlash * fxk, sim.alive && sim.hp < 30 ? 0.22 + 0.16 * Math.sin(t * 7) * fxk : 0),
     streakX: sim.svx, streakY: sim.svy, streak, combat, tint, flare: sim.flare * fxk, storm: Math.max(sim.storm, sim.zoneStorm) * fxk, sunTint: fb.sunTint, ship: sim.alive ? [ix, iy, sim.boosting ? 1.0 : sim.thrusting ? 0.6 : 0.15] : undefined, warp: buildWarp(cx, cy, settings.reduceFx ? 0 : 1) });
 

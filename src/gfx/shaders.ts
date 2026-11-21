@@ -33,7 +33,7 @@ uniform vec2 uRes; uniform vec2 uCam; uniform float uAspect; uniform float uTime
 uniform int uNP; uniform vec4 uPA[8]; uniform vec4 uPB[8]; uniform vec4 uPC[8];   // PC: x detail (resolve-on-approach), y scan rewrite
 uniform float uG[24];    // glyph table, see GLYPHS in renderer.ts
 uniform float uNeb; uniform float uSun; uniform vec3 uTint; uniform vec3 uStreak; uniform vec3 uShipL; uniform float uFlare; uniform float uStorm;
-uniform vec3 uSunTint; uniform float uEcl; uniform float uMega; uniform vec3 uVel; uniform float uCombat;
+uniform vec3 uSunTint; uniform float uEcl; uniform float uMega; uniform float uCombat;
 out vec4 o;
 ${NOISE}
 const vec3 L = vec3(0.568, 0.5165, 0.640);
@@ -224,8 +224,7 @@ void main(){
   }
 
   // ---- stars: thinned in a fight
-  vec2 h = uRes * 0.5 + uVel.xy * uRes.x * 0.35;
-  vec2 sc = h + (cell - h) * (1.0 + 0.45 * uVel.z);
+  vec2 sc = cell;
   float thin = 1.0 - 0.6 * uCombat;
   vec4 s0 = starLayer(sc, camCell, 0.14, 0.020 * thin, 1.0);
   vec4 s1 = starLayer(sc, camCell, 0.34, 0.011 * thin, 2.0);
@@ -239,9 +238,7 @@ void main(){
       float sa = mod(atan(uStreak.y, uStreak.x) + 3.14159265, 3.14159265);
       k = (sa < 0.3927 || sa > 2.7489) ? G_DASH : sa < 1.1781 ? G_SL : sa < 1.9635 ? G_BAR : G_BS;
     }
-    vec2 rel = normalize(cell - uRes * 0.5 + 1e-3);
-    float shift = dot(rel, uVel.xy) * uVel.z;
-    rgb += st.rgb * mix(vec3(1.0), shift > 0.0 ? vec3(0.7, 0.9, 1.4) : vec3(1.4, 0.8, 0.6), abs(shift) * 0.6); glyph = k;
+    rgb += st.rgb; glyph = k;
   } else {                                          // bright near stars get - | arms in the neighbouring cells
     vec4 nL = starLayer(sc + vec2(-1.0, 0.0), camCell, 0.70, 0.0055 * thin, 3.0);
     vec4 nR = starLayer(sc + vec2( 1.0, 0.0), camCell, 0.70, 0.0055 * thin, 3.0);
@@ -462,7 +459,7 @@ void main(){
     vec3 hue = s.rgb / mx;
     hue = mix(vec3(dot(hue, vec3(0.333))), hue, 1.15);
     fg = hue * (uFgBase + uFgGain * l);
-    bg = s.rgb * uBgK * (s.a > 0.0 ? 0.04 : 1.0);
+    bg = s.rgb * uBgK * (s.a > 0.0 ? 0.3 : 1.0);
   }
   if (ma.a <= 0.0) {                                  // dark halo around sprites so ships separate from the backdrop
     float h = 0.0;
