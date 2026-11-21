@@ -6,7 +6,7 @@ import { panel, panelOrigin } from './gfx/menu';
 import { Renderer } from './gfx/renderer';
 import { RAMPS, gi } from './gfx/atlas';
 import { Audio } from './audio/audio';
-import { DT, In, Kind, MAX_B, MAX_E, MAX_P, Sim, UP_DESC, UP_MAX, UP_N, UP_NAME } from './sim/sim';
+import { DT, In, Kind, MAX_B, MAX_E, MAX_P, PROF_NAMES, Sim, UP_DESC, UP_MAX, UP_N, UP_NAME } from './sim/sim';
 import { MAX_PLANETS, PLANET_STRIDE, STATION_NAMES, hasStation, planetParams, planetsNear, sectorOf, stationType } from './sim/world';
 import { hash2 } from './core/util';
 
@@ -523,8 +523,10 @@ function frame(now: number): void {
 
   perf.frame(dt * 1000, performance.now() - t0, simMs);
   governor();
+  sim.profOn = settings.perf;
   if (settings.perf) perf.update(now, () =>
     `cpu ${perf.cpuMs.toFixed(2)}ms  sim ${perf.simMs.toFixed(2)}ms  gpu ${renderer.gpuMs.toFixed(2)}ms\n` +
+    'step ' + PROF_NAMES.map((n, i) => n + ' ' + sim.prof[i].toFixed(3)).join('  ') + '\n' +
     `cells ${renderer.cols}x${renderer.rows} (${renderer.cwPx}x${renderer.chPx}px)  draws ${renderer.drawCalls}  hdr ${renderer.hdr}\n` +
     `ent ${sim.nEnt}/${MAX_E}  bul ${sim.nBul}/${MAX_B}  par ${sim.nPar}/${MAX_P}  glyphs ${renderer.glyphs.n}  glows ${renderer.glows.n}\n` +
     `sprites ${renderer.sprites.n}  ramp ${renderer.rampName}  auto-q ${settings.auto ? govLevel : 'off'}  heap ${heapMb()}`);

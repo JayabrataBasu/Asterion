@@ -4,7 +4,7 @@ import { In, MAX_E, Sim } from '../src/sim/sim';
 /** Many seeds x varied inputs. Asserts the invariants that previously broke (hash chain cycles, NaNs, runaway counts). */
 describe('soak', () => {
   it('survives 12 seeds x 3 simulated minutes with bounded counts, finite state and sane step time', () => {
-    let worst = 0;
+    let worst = 0, slow = 0;
     for (let seed = 1; seed <= 12; seed++) {
       const sim = new Sim(seed * 7919);
       sim.scrap = 300; sim.buyUpgrade(seed % 6);
@@ -17,7 +17,7 @@ describe('soak', () => {
         sim.assist = seed % 2 === 0;
         const t0 = performance.now();
         sim.step();
-        worst = Math.max(worst, performance.now() - t0);
+        const dt = performance.now() - t0; worst = Math.max(worst, dt); if (dt > 16) slow++;
         if (!sim.alive && sim.deadT > 1.5) { deaths++; sim.reset(seed + deaths); }
         if ((t & 127) === 0) {
           expect(Number.isFinite(sim.sx + sim.sy + sim.svx + sim.svy + sim.hp + sim.scrap)).toBe(true);
@@ -26,6 +26,8 @@ describe('soak', () => {
         }
       }
     }
-    expect(worst).toBeLessThan(50);        // watchdog: no single step may hang
+    // watchdog: no step may hang. Wall-clock checks share the CPU with other test workers and GC, so allow rare hiccups
+    expect(worst).toBeLessThan(250);
+    expect(slow).toBeLessThan(10);
   }, 120000);
 });

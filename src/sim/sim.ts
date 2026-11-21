@@ -28,6 +28,7 @@ export const MAX_M = 12;
 export const enum PK { Spark = 0, Exhaust = 1, Debris = 2, Smoke = 3, Flash = 4 }
 export const enum Col { Fire = 0, Cyan = 1, Red = 2, White = 3, Gray = 4, Green = 5, Magenta = 6, Amber = 7 }
 
+export const PROF_NAMES = ['ship', 'world', 'ents', 'bolts', 'misc', 'fx'];
 export const SHIP_R = 2.4;
 /** Ship handling feel — tune here. TURN is only used by mouse aim now. */
 const HANDLING = { TURN_MAX: 2.6, TURN_ACC: 9, TURN_DECAY: 12, GRIP: 0.8, GRIP_COAST: 0.25, GRIP_FWD: 0.5 };   // GRIP applies under thrust; GRIP_COAST while coasting, so drift survives a flip
@@ -197,22 +198,34 @@ export class Sim {
   }
 
   // ===================================================================== step
+  /** Per-system step timings (ms, smoothed); only measured while profOn (the ?perf=1 overlay turns it on). */
+  readonly prof = new Float64Array(PROF_NAMES.length);
+  profOn = false;
+  private lap(i: number, t: number): number { const n = performance.now(); this.prof[i] += (n - t - this.prof[i]) * 0.05; return n; }
+
   step(): void {
+    const P = this.profOn; let t = P ? performance.now() : 0;
     this.time += DT; this.tick++;
     this.nPl = planetsNear(this.sx, this.sy, 380, this.pl, this.time);
     if (this.alive) this.updateShip(); else this.deadT += DT;
+    if (P) t = this.lap(0, t);
     this.streamSectors();
     this.director();
     this.updateEvents();
+    if (P) t = this.lap(1, t);
     this.rebuildHash();
     this.updateEnts();
+    if (P) t = this.lap(2, t);
     this.updateBullets();
+    if (P) t = this.lap(3, t);
     this.updateScrap();
     if (this.alive) { this.objProgress(3, DT); if (this.stationNear) this.objProgress(4, DT); }
     this.updateMissiles();
     if (this.slowT > 0) this.slowT -= DT;
     if (this.alive) { this.shipVsEnts(); this.findDock(); }
+    if (P) t = this.lap(4, t);
     this.updateParticles();
+    if (P) t = this.lap(5, t);
     this.shake *= Math.exp(-5.5 * DT);
     this.flash *= Math.exp(-7 * DT);
     this.hitFlash *= Math.exp(-6 * DT);
