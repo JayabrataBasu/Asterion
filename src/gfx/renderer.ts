@@ -13,7 +13,7 @@ export interface FrameParams {
   flash: number; hit: number;
   streakX: number; streakY: number; streak: number; ship?: [number, number, number]; combat?: number; hyper?: [number, number, number]; flare?: number; storm?: number; warp?: Float32Array; tint?: [number, number, number];
   /** Star colour of the current system, eclipse / megastructure progress (0 = off), heading + speed factor for star aberration. */
-  sunTint?: [number, number, number]; style?: [number, number, number, number]; ecl?: number; mega?: number;
+  sunTint?: [number, number, number]; motion?: number; style?: [number, number, number, number]; ecl?: number; mega?: number;
   /** Typed-arrival reveal radius in cells (<0 = off); planet index being rewritten by the scan view (-1 none); layer debug. */
   reveal?: number; scanPlanet?: number; layers?: boolean;
 }
@@ -74,7 +74,7 @@ export class Renderer {
     this.pComp = this.prog(S.VS_FULLSCREEN, S.FS_COMPOSITE);
     this.uScene = this.locs(this.pScene, ['uRes', 'uCam', 'uAspect', 'uTime', 'uNP', 'uPA', 'uPB', 'uPC', 'uG', 'uNeb', 'uSun', 'uStreak', 'uTint', 'uShipL', 'uFlare', 'uStorm', 'uSunTint', 'uEcl', 'uMega', 'uCombat', 'uHyper', 'uStyle']);
     this.uGlow = this.locs(this.pGlow, ['uRes', 'uCam', 'uAspect']);
-    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers', 'uQZ', 'uQN', 'uWorldCell']);
+    this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers', 'uQZ', 'uQN', 'uWorldCell', 'uMotion']);
     this.uGlyph = this.locs(this.pGlyph, ['uCellPx', 'uOrigin', 'uCanvas', 'uScene', 'uAtlas', 'uBgK']);
     this.uSprite = this.locs(this.pSprite, ['uRes', 'uCam', 'uAspect', 'uTime']);
     this.uMatch = this.locs(this.pMatch, ['uSpr', 'uSig', 'uCand', 'uNC', 'uFill']);
@@ -310,7 +310,7 @@ export class Renderer {
     gl.uniform2i(a.uCells, this.cols, this.rows); gl.uniform2i(a.uOrigin, this.ox, this.oy); gl.uniform2i(a.uCellPx, this.cwPx, this.chPx);
     gl.uniform1f(a.uExposure, st.exposure); gl.uniform1f(a.uDither, st.dither); gl.uniform1f(a.uBgK, st.bgK);
     gl.uniform1f(a.uFgBase, st.fgBase); gl.uniform1f(a.uFgGain, st.fgGain); gl.uniform1f(a.uTime, f.time);
-    gl.uniform3f(a.uReveal, f.reveal ?? -1, 4, f.reveal !== undefined && f.reveal >= 0 ? 1 : 0); gl.uniform1i(a.uLayers, f.layers ? 1 : 0); gl.uniform2i(a.uWorldCell, Math.floor(f.camX), Math.floor(f.camY / this.aspect)); gl.uniform4fv(a.uQZ, this.qz); gl.uniform1i(a.uQN, this.qn);
+    gl.uniform3f(a.uReveal, f.reveal ?? -1, 4, f.reveal !== undefined && f.reveal >= 0 ? 1 : 0); gl.uniform1i(a.uLayers, f.layers ? 1 : 0); gl.uniform1f(a.uMotion, f.motion ?? 0); gl.uniform2i(a.uWorldCell, Math.floor(f.camX), Math.floor(f.camY / this.aspect)); gl.uniform4fv(a.uQZ, this.qz); gl.uniform1i(a.uQN, this.qn);
     gl.drawArrays(gl.TRIANGLES, 0, 3); this.drawCalls++;
 
     // ---- pass 3: instanced glyphs (entities, particles, HUD)

@@ -95,7 +95,7 @@ vec4 starLayer(vec2 cell, vec2 camCell, float par, float dens, float seed){
 }
 
 vec3 galaxy(vec2 cell, vec2 camCell){
-  vec2 p = cell + camCell * 0.06;
+  vec2 p = cell + floor(camCell * 0.06);
   vec2 g = floor(p / 120.0);
   if (hash12(g + 7.3) < 0.80) return vec3(0.0);
   vec2 c = (g + 0.25 + 0.5 * vec2(hash12(g + 1.1), hash12(g + 2.2))) * 120.0;
@@ -110,7 +110,7 @@ vec3 galaxy(vec2 cell, vec2 camCell){
   return tint * (exp(-r * 2.3) * (0.18 + 0.7 * arm) * 0.55 + exp(-r * 8.0) * 0.9);
 }
 
-vec2 sunPos(vec2 camCell){ return uRes * vec2(0.66, 0.78) - camCell * 0.02; }
+vec2 sunPos(vec2 camCell){ return uRes * vec2(0.66, 0.78) - floor(camCell * 0.02); }
 
 vec3 sunGlow(vec2 cell, vec2 sp, out float core){
   vec2 d = (cell + 0.5 - sp) * vec2(1.0, uAspect);
@@ -211,7 +211,9 @@ void main(){
   vec2 camCell = uCam / vec2(1.0, uAspect);
 
   // ---- rare nebulae (uNeb already carries the per-sector amount) and very rare galaxies
-  vec3 rgb = (nebLayer(wp - uCam*0.80, 0.0) * 0.85 + nebLayer(wp - uCam*0.55, 1.0) * 0.55 + nebLayer(wp - uCam*0.25, 2.0) * 0.28) * uNeb * uTint;   // near clouds, mid clouds, far colour wash
+  // each layer scrolls in whole-cell steps: the glyphs stay identical and slide as a block, instead of re-rolling every frame (the 'ripple' while moving)
+  vec2 cu = vec2(1.0, uAspect), scr = (cell + 0.5 - uRes * 0.5) * cu;
+  vec3 rgb = (nebLayer(scr + floor(uCam * 0.20 / cu) * cu, 0.0) * 0.85 + nebLayer(scr + floor(uCam * 0.45 / cu) * cu, 1.0) * 0.55 + nebLayer(scr + floor(uCam * 0.75 / cu) * cu, 2.0) * 0.28) * uNeb * uTint;   // near clouds, mid clouds, far colour wash
   rgb += galaxy(cell, camCell) * uNeb * uTint;
   float glyph = 0.0;
 
@@ -464,6 +466,7 @@ uniform ivec2 uCells; uniform ivec2 uOrigin; uniform ivec2 uWorldCell;   // uWor
 uniform float uExposure, uDither, uBgK, uFgBase, uFgGain, uTime;
 uniform vec3 uReveal;      // typed arrival: x = revealed radius (cells), y = front width, z = on
 uniform int uLayers;       // debug: tint cells by layer
+uniform float uMotion;     // 0 at rest .. 1 at speed: backdrop text fades to a colour wash so fast scrolling does not strobe
 uniform vec4 uQZ[16]; uniform int uQN;   // ship quiet zones: xy = centre (cells), z = hull radius (cell widths), w = allegiance (0 player, 1 hostile, 2 neutral)
 out vec4 o;
 ${GLYPH_COV}
@@ -549,6 +552,7 @@ void main(){
     fg = t * max(0.25, dot(fg, vec3(0.333))); bg = t * 0.03;
   }
   float cov = g == 0 ? 0.0 : glyphCov(g, loc);
+  if (ma.a <= 0.0 && s.a <= 0.0) cov *= 1.0 - 0.8 * uMotion;   // plain backdrop cells only; stars, bodies, ships keep their glyphs
   o = vec4(mix(bg, fg, cov), 1.0);
 }`;
 
