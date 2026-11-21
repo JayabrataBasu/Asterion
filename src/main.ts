@@ -701,9 +701,12 @@ function frame(now: number): void {
   // camera: follow interpolated ship with velocity look-ahead, exponential smoothing
   const ix = sim.spx + (sim.sx - sim.spx) * alpha, iy = sim.spy + (sim.sy - sim.spy) * alpha + (sim.vert ? (sim.spz + (sim.sz - sim.spz) * alpha) * FrameBuilder.OBL : 0);
   const lead = 0.22 + 0.2 * Math.min(1, Math.hypot(sim.svx, sim.svy) / 150);   // look-ahead grows with speed (stands in for zoom: the glyph grid is fixed)
-  const tx = ix + sim.svx * lead, ty = iy + sim.svy * lead;
+  let lx = sim.svx * lead, ly = sim.svy * lead;
+  const lm = Math.hypot(lx, ly), LMAX = 28;                 // capped look-ahead: at boost speed a velocity flicker used to shove the whole view (the screen wobble)
+  if (lm > LMAX) { lx *= LMAX / lm; ly *= LMAX / lm; }
+  const tx = ix + lx, ty = iy + ly;
   if (!camInit) { camX = tx; camY = ty; camInit = true; }
-  const k = 1 - Math.exp(-6 * dt);
+  const k = 1 - Math.exp(-(sim.boosting ? 2.5 : 6) * dt);
   camX += (tx - camX) * k; camY += (ty - camY) * k;
   const t = sim.time + alpha * DT;
   const sh = sim.shake * (settings.reduceFx ? 0.25 : 1);
