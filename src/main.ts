@@ -587,6 +587,17 @@ function drawHangar(m: MenuDef, labels: string[], cx: number, cy: number, t: num
 /** ?roster=1: every hull side by side (silhouette / glyph-weight check). */
 let rosterView = new URLSearchParams(location.search).has('roster');
 function drawRoster(cx: number, cy: number, t: number): void {
+  if (new URLSearchParams(location.search).get('roster') === '2') {      // enemies and objects: [name, sprite type, size, scale, aux]
+    const SKK = 1.35, E: [string, number, number, number, number][] = [['DRONE', 1, SKK * 12, 0.85, 0.5], ['GUNSHIP', 2, SKK * 17, 0.65, 0.5], ['MINELAYER', 3, SKK * 12, 0.65, 0.5], ['DREADNOUGHT', 9, SKK * 32, 0.8, 0.5],
+      ['SNIPER', 10, SKK * 17, 0.62, 0.5], ['SPLITTER', 11, SKK * 12, 0.8, 0.5], ['RAMMER', 12, SKK * 12, 0.62, 0.5], ['TENDER', 13, SKK * 15, 0.7, 0.5],
+      ['MINE', 4, 5, 0.8, 1], ['ASTEROID', 5, 12 * 1.5, 1, 8], ['STATION', 8, 24, 0.75, 0], ['WINGMAN', 21, SKK * 5, 0.9, 0.6]];
+    for (let i = 0; i < E.length; i++) {
+      const [nm, ty, sz, sc, aux] = E[i], wx = cx - 66 + (i % 4) * 44, wy = cy + 28 - Math.floor(i / 4) * 28;
+      renderer.sprites.add(wx, wy, Math.PI / 2, sz, ty, ty === 5 ? 0.4 : 0.6, 0, aux, sc, 1);
+      renderer.glyphs.text(nm, Math.round(renderer.cols * 0.5 + (wx - cx)) - (nm.length >> 1), Math.round(renderer.rows * 0.5 - (wy - cy) / renderer.aspect) + 9, 0.6, 1.2, 1.0, 1);
+    }
+    return;
+  }
   for (let i = 0; i < ROSTER.length; i++) {
     const d = ROSTER[i], wx = cx - 66 + (i % 4) * 44, wy = cy + (i < 4 ? 22 : -18);
     renderer.sprites.add(wx, wy, Math.PI / 2 + Math.sin(t * 0.5 + i) * 0.15, d.artSize, d.art, d.art === 0 ? 0.5 : d.art === 18 ? 0 : 0.6, 0, 0.9, 0.72, 1);

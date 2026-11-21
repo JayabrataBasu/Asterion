@@ -207,7 +207,7 @@ export class FrameBuilder {
       const sp2 = Math.sqrt(s.evx[i] * s.evx[i] + s.evy[i] * s.evy[i]);
       const thr = Math.min(1, sp2 / (k === Kind.Drone ? 64 : k === Kind.Gunship ? 42 : 34)) * 0.8 + 0.1;
       if (k === Kind.Drone) {
-        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 10, Spr.Drone, s.eseed[i], f, thr, 0.72, this.shade(x, y)); this.ship(x, y, a, SK * 10, 0.72, 1); gl.add(x, y, 6, 0.32, 0.05, 0.05); }
+        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 12, Spr.Drone, s.eseed[i], f, thr, 0.85, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.85, 1); gl.add(x, y, 6, 0.32, 0.05, 0.05); }
       } else if (k === Kind.Gunship) {
         if (this.visible(x, y, 25)) {
           sp.add(x, y, a, SK * 17, Spr.Gunship, s.eseed[i], f, thr * (s.es[i] === 2 && s.eaux[i] > 0 ? 1 : 0.9), 0.65, this.shade(x, y)); this.ship(x, y, a, SK * 17, 0.65, 1);

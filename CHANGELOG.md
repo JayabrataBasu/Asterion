@@ -113,3 +113,8 @@
 - Vivid skies: saturated per-sector nebula palettes, hot emission cores, rim-lit dust lanes, bright knots and filaments, more (and brighter) galaxies and stars, a stronger sun corona, richer glyph colour. Dark gaps kept for contrast.
 - Removed the black-screen reveal that replayed on every sector crossing (it was the "ripple" at speed); removed the speed fade and whole-cell backdrop scrolling that were earlier guesses.
 - Mule frames thickened and brightened for contrast.
+
+## v4.0-alpha.5
+- Camera: restored the original follow (my boost easing let the ship drift to the screen edge and snap back when flying up).
+- Enemy palettes: each hostile has its own bright hue (crimson drone, amber gunship, purple minelayer, red/steel dreadnought, icy-blue sniper, toxic-yellow splitter, red-orange rammer); drone drawn larger. Magpie body and claw made bolder.
+- `?roster=2` shows every enemy and object side by side.

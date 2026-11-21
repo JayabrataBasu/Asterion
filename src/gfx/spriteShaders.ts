@@ -162,11 +162,11 @@ float fShade(vec2 q, float thr, out float h, out float mt, out vec3 dp){
 
 // ---- magpie: asymmetric patchwork salvager with one articulated grabber arm (gS = reach 0..1). Not mirrored.
 float fMagpie(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  float dB = min(sdBox(q - vec2(-1.0, 0.0), vec2(5.5, 3.0)) - 0.5, sdTri(q, vec2(10.5, 0.4), vec2(5.0, 3.0), vec2(5.0, -2.4)));
-  float dPa = min(sdBox(rot(0.5) * (q - vec2(-4.0, -4.6)), vec2(3.4, 1.4)), sdBox(rot(-0.35) * (q - vec2(0.5, 5.2)), vec2(2.8, 1.1)));   // scrap plates bolted on at odd angles
-  vec2 sh = vec2(3.5, 4.8), el = sh + vec2(3.0 + 3.0 * gS, 3.5 + 1.5 * gS), cl = el + vec2(4.5 + 6.0 * gS, -1.5 - 2.5 * gS);
-  float dA = min(sdSeg(q, sh, el) - 0.85, sdSeg(q, el, cl) - 0.75);
-  float dCl = min(sdSeg(q, cl, cl + vec2(3.6, 2.6)) - 0.65, sdSeg(q, cl, cl + vec2(3.6, -2.6)) - 0.65);   // two-pronged grabber
+  float dB = min(sdBox(q - vec2(-1.0, -0.5), vec2(6.5, 3.8)) - 0.5, sdTri(q, vec2(11.0, 0.4), vec2(5.5, 3.3), vec2(5.5, -3.0)));
+  float dPa = min(sdBox(rot(0.5) * (q - vec2(-5.0, -5.6)), vec2(4.2, 1.8)), sdBox(rot(-0.35) * (q - vec2(-1.0, 5.4)), vec2(3.2, 1.4)));   // scrap plates bolted on at odd angles
+  vec2 sh = vec2(2.0, 5.0), el = sh + vec2(4.0 + 3.0 * gS, 5.0 + 1.5 * gS), cl = el + vec2(7.0 + 6.0 * gS, -2.0 - 2.5 * gS);
+  float dA = min(sdSeg(q, sh, el) - 1.2, sdSeg(q, el, cl) - 1.0);
+  float dCl = min(sdSeg(q, cl, cl + vec2(4.5, 3.2)) - 0.9, sdSeg(q, cl, cl + vec2(4.5, -3.2)) - 0.9);   // two-pronged grabber
   float dE = min(sdBox(q - vec2(-8.6, 1.6), vec2(1.3, 1.1)) - 0.2, sdBox(q - vec2(-8.0, -3.4), vec2(1.0, 0.9)) - 0.2);
   float dH = min(min(dB, dPa), min(min(dA, dCl), dE));
   float L = 0.8 + 5.0 * thr;
@@ -480,7 +480,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     vec3 patchC = mix(vec3(0.25, 0.90, 0.80), vec3(0.70, 0.72, 0.75), step(0.5, hash12(floor(q * 0.35) + 7.0)));
     col = m == dp.x ? mix(vec3(0.95, 0.45, 0.22), patchC, step(0.62, hash12(floor(q * 0.3)))) : (m == dp.y ? patchC : vec3(1.0, 0.85, 0.20));
     col *= 1.0 - 0.3 * panel(q.x * 0.3 + 0.1, 0.06) - 0.2 * panel(q.y * 0.3, 0.06);
-    emis += smoothstep(1.4, 0.0, length(q - vec2(11.0 + 9.0 * gS, 6.8 - gS))) * vec3(0.4, 1.6, 0.9) * gS;
+    emis += smoothstep(1.4, 0.0, length(q - vec2(13.0 + 9.0 * gS, 8.0 - gS))) * vec3(0.4, 1.6, 0.9) * gS;
     emis += smoothstep(0.9, 0.0, length((q - vec2(-9.8, 1.6)) / vec2(0.8, 1.0))) * vec3(1.6, 0.8, 0.3) * (0.4 + thr);
     spec = 0.35;
   } else if (ty == 20) {               // hive: honey hex pods, dark seams; rear bays glow as they iris open
@@ -506,14 +506,14 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     emis += smoothstep(1.5, 0.0, length(q - vec2(-1.8, 0.0))) * vec3(0.3, 1.6, 1.0);
     spec = 0.5;
   } else if (ty == 1) {
-    col = mix(vec3(0.30, 0.08, 0.12), vec3(0.55, 0.14, 0.16), smoothstep(0.0, 1.0, h));
+    col = mix(vec3(0.62, 0.14, 0.20), vec3(1.0, 0.28, 0.30), smoothstep(0.0, 1.0, h));   // drone: bright crimson
     float eye = length(vec2(p.x - 1.1, p.y) / vec2(1.2, 1.0));
     emis += smoothstep(1.0, 0.1, eye) * vec3(2.2, 0.35, 0.25) * (0.7 + 0.5 * blink);
     float ringc = abs(length(q) - 1.5);
     col *= 1.0 - 0.35 * smoothstep(0.15, 0.0, ringc);
     emis += smoothstep(0.5, 0.0, length(q - vec2(9.0, 1.8))) * vec3(1.8, 0.5, 0.2);
   } else if (ty == 2) {
-    vec3 hullC = vec3(0.50, 0.36, 0.16), podC = vec3(0.30, 0.22, 0.14), rearC = vec3(0.16, 0.14, 0.15);
+    vec3 hullC = vec3(0.95, 0.58, 0.18), podC = vec3(0.62, 0.38, 0.16), rearC = vec3(0.35, 0.32, 0.34);   // gunship: amber
     float m = min(dp.x, min(dp.y, dp.z));
     col = m == dp.x ? hullC : (m == dp.y ? podC : rearC);
     col *= 1.0 - 0.3 * panel(q.x * 0.3 + 0.2, 0.05) * (m == dp.z ? 0.0 : 1.0);
@@ -526,7 +526,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     spec = 0.5;
   } else if (ty == 3) {
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(0.34, 0.16, 0.42) : (m == dp.y ? vec3(0.22, 0.14, 0.28) : vec3(0.16, 0.14, 0.18));
+    col = m == dp.x ? vec3(0.75, 0.35, 0.95) : (m == dp.y ? vec3(0.50, 0.25, 0.65) : vec3(0.35, 0.30, 0.40));   // minelayer: purple
     col *= 1.0 - 0.3 * panel(q.x * 0.22, 0.05);
     for (int i = 0; i < 3; i++) {
       vec2 c = vec2(-4.0 + float(i) * 2.2, 5.8);
@@ -538,7 +538,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     emis += smoothstep(0.9, 0.0, length(q - vec2(9.6, 0.0))) * vec3(1.2, 0.3, 1.4) * blink;
     emis += smoothstep(1.0, 0.0, length((q - vec2(-12.0, 0.0)) / vec2(0.9, 2.0))) * vec3(1.2, 0.4, 1.4) * (0.3 + thr);
   } else if (ty == 9) {
-    vec3 hullC = vec3(0.34, 0.11, 0.14), podC = vec3(0.24, 0.22, 0.27), engC = vec3(0.14, 0.13, 0.16);
+    vec3 hullC = vec3(0.75, 0.15, 0.20), podC = vec3(0.55, 0.55, 0.65), engC = vec3(0.32, 0.30, 0.36);   // dreadnought: deep red hull, steel pods
     float m = min(dp.x, min(dp.y, dp.z));
     col = m == dp.x ? hullC : (m == dp.y ? podC : engC);
     col *= 1.0 - 0.3 * panel(q.x * 0.16 + 0.3, 0.05) - 0.15 * panel(q.y * 0.3, 0.05);
@@ -551,14 +551,14 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     spec = 0.6;
   } else if (ty == 11) {
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(0.62, 0.46, 0.10) : (m == dp.y ? vec3(0.40, 0.30, 0.08) : vec3(0.22, 0.18, 0.10));
+    col = m == dp.x ? vec3(0.85, 0.95, 0.20) : (m == dp.y ? vec3(0.55, 0.70, 0.15) : vec3(0.35, 0.35, 0.20));   // splitter: toxic yellow-green
     col *= 1.0 - 0.3 * panel(q.x * 0.4, 0.06);
     emis += smoothstep(0.9, 0.0, length(q - vec2(2.2, 2.4))) * vec3(2.0, 1.2, 0.2) * (0.5 + 0.6 * blink);
     emis += smoothstep(0.35, 0.0, abs(q.x - 4.6)) * smoothstep(1.4, 0.0, q.y) * vec3(2.0, 0.6, 0.1);
     spec = 0.4;
   } else if (ty == 12) {
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(0.45, 0.14, 0.10) : (m == dp.y ? vec3(0.20, 0.18, 0.20) : vec3(0.85, 0.80, 0.70));
+    col = m == dp.x ? vec3(0.95, 0.32, 0.15) : (m == dp.y ? vec3(0.45, 0.42, 0.46) : vec3(0.95, 0.90, 0.80));   // rammer: hot red-orange, bone spike
     col = mix(col, vec3(0.95, 0.75, 0.15), smoothstep(0.25, 0.1, abs(q.y - 1.7)) * step(m, dp.x + 0.001) * step(-3.0, q.x) * step(q.x, 4.0));
     emis += smoothstep(1.2, 0.0, length(q - vec2(10.5, 0.0))) * vec3(2.4, 0.7, 0.2) * (0.6 + 0.8 * blink);
     emis += smoothstep(0.9, 0.0, length((q - vec2(-7.8, 1.2)) / vec2(0.8, 1.0))) * vec3(1.8, 0.9, 0.3) * (0.4 + thr);
@@ -574,7 +574,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     emis += smoothstep(0.9, 0.0, length((q - vec2(-10.2, 1.8)) / vec2(0.8, 1.0))) * vec3(0.5, 1.4, 0.6) * (0.3 + thr);
     spec = 0.5;
   } else if (ty == 10) {
-    vec3 bodyC = vec3(0.20, 0.34, 0.42), finC = vec3(0.12, 0.20, 0.30), engC = vec3(0.16, 0.18, 0.22);
+    vec3 bodyC = vec3(0.45, 0.78, 1.0), finC = vec3(0.30, 0.50, 0.80), engC = vec3(0.35, 0.38, 0.50);   // sniper: icy blue
     float m = min(dp.x, min(dp.y, dp.z));
     col = m == dp.x ? bodyC : (m == dp.y ? finC : engC);
     col *= 1.0 - 0.25 * panel(q.x * 0.3, 0.05);
@@ -651,7 +651,6 @@ void main(){
       vec3 n = normalize(vec3(-(h1 - h) / e * 1.6, -(h2 - h) / e * 1.6 * sgn, 1.0));
       vec3 emis; float spec;
       vec3 al = paint(ty, q, p, dp, h, thr, gS, emis, spec);
-      if (ty == 1 || ty == 2 || ty == 3 || ty == 9 || ty == 10 || ty == 11 || ty == 12) al = mix(vec3(dot(al, vec3(0.333))), al, 0.8) * vec3(1.2, 0.8, 0.78);   // hostile hulls lean red and a little muted: the player's hull stays the most saturated thing on screen
       if (mod(floor(gM / 4.0), 2.0) >= 1.0) al *= 1.0 - 0.32 * panel(q.x * 0.9, 0.09);   // armour plating rows
       float diff = clamp(dot(n, L3), 0.0, 1.0);
       float sp = pow(max(dot(n, normalize(L3 + vec3(0.0, 0.0, 1.0))), 0.0), 22.0) * spec;
