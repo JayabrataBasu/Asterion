@@ -86,7 +86,7 @@ describe('neutral haulers', () => {
 
   it('are never targeted by aim assist or missiles (a drone in the same spot is)', () => {
     const fire = (kind: number): { assist: number; tgt: number } => {
-      const { s, x0, y0 } = quiet(); s.aimAssist = 2; s.sa = 0; s.up[Up.Missile] = 1; s.missiles = 3;
+      const { s, x0, y0 } = quiet(); s.aimAssist = 2; s.sa = 0; s.up[Up.Missile] = 1; s.refreshShip(); s.missiles = 3;
       const e = s.spawnEnt(kind, x0 + 60, y0, 0, 0); s.ehp[e] = 1e6;
       s.step(); s.input = In.Missile; s.step();
       let tgt = -2; for (let m = 0; m < 12; m++) if (s.mlife[m] > 0) tgt = s.mtgt[m];

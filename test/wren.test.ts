@@ -5,7 +5,8 @@ import { In, Sim } from '../src/sim/sim';
 /**
  * Wren regression: the ShipDef refactor must leave the original ship's handling bit-for-bit identical.
  * M1 proved the ShipDef refactor bit-identical against a trace recorded from the pre-refactor sim (commit 4098ecb).
- * Deliberate re-baselines: M2 (Wren gained shields, energy, heat, signature), M3 (event RNG gained the rare set-piece roll).
+ * Deliberate re-baselines: M2 (Wren gained shields, energy, heat, signature), M3 (event RNG gained the rare set-piece roll),
+ * M7 (upgrades became ShipDef module modifiers; cannon fire rate is now linear +8%/level).
  * Otherwise it guards against unintended handling changes. Regenerate only on purpose:
  * `DUMP_TRACE=1 npx vitest run test/wren.test.ts -t dump --reporter=verbose`, then put the TRACE line into the fixture.
  */
@@ -20,6 +21,7 @@ export function trace(): number[][] {
   for (const c of cases) {
     const s = new Sim(1);
     for (let i = 0; i < 7; i++) s.up[i] = c.up[i];
+    s.refreshShip();
     s.reset(c.seed); s.assist = c.assist; s.aimAssist = c.aimAssist;
     let r = c.seed * 2654435761 >>> 0, input = 0;
     for (let t = 0; t < 60 * 50; t++) {

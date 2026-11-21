@@ -239,7 +239,7 @@ function hangarCard(): MenuDef {
     { label: have ? '' : 'NEEDS: ' + u.need });
   return { title: 'S T A T S', items, footer: 'RATINGS: 50 = WREN' };
 }
-function applyShip(): void { sim.setShip(shipById(save.ship)); for (let i = 0; i < UP_N; i++) sim.up[i] = upsOf(save, save.ship)[i]; }
+function applyShip(): void { for (let i = 0; i < UP_N; i++) sim.up[i] = upsOf(save, save.ship)[i]; sim.setShip(shipById(save.ship)); }
 
 function currentMenu(): MenuDef {
   switch (state) {
@@ -290,7 +290,7 @@ function onKey(code: string): void {
   if (!sim.alive && (code === 'KeyR' || code === 'Enter') && sim.deadT > 0.6) { newRun(); return; }
   if (!sim.alive && code === 'KeyC' && sim.deadT > 0.6) {
     const acc = sim.shots > 0 ? Math.round(100 * sim.hits / sim.shots) : 0, m = (sim.time / 60) | 0, sec = (sim.time | 0) % 60;
-    const txt = 'ASTERION  score ' + sim.score + '  kills ' + sim.kills + '  time ' + m + ':' + String(sec).padStart(2, '0') + '  accuracy ' + acc + '%  bosses ' + sim.bossKills;
+    const txt = 'ASTERION  ' + sim.ship.name + '  score ' + sim.score + '  kills ' + sim.kills + '  survey ' + Math.round(explorer.survey() * 100) + '%  distance ' + (sim.dist / 1000).toFixed(1) + 'ku' + '  time ' + m + ':' + String(sec).padStart(2, '0') + '  accuracy ' + acc + '%  bosses ' + sim.bossKills;
     void navigator.clipboard?.writeText(txt).then(() => say('result copied to clipboard'), () => say('clipboard unavailable'));
     return;
   }
@@ -455,6 +455,7 @@ function pollInput(): number {
   if (q.has('hud') && q.get('hud') === '0') settings.hud = false;
   if (q.has('perf')) { settings.perf = true; perf.show(true); }
   if (q.has('evt')) sim.debugEvtP = parseFloat(q.get('evt')!);
+  if (q.has('modules')) { sim.up[1] = 3; sim.up[6] = 1; sim.up[8] = 2; sim.refreshShip(); sim.invuln = 0; }
   if (q.has('sys')) explorer.enter(Math.max(0, Math.min(39, parseInt(q.get('sys')!, 10) | 0)), false);
   if (q.has('setpiece')) { const k = ({ beacon: 0, derelict: 1, pulsar: 2, wormhole: 4, signal: 10 } as Record<string, number>)[q.get('setpiece')!] ?? 1; sim.setPoi(0, sim.sx + (k === 1 ? 40 : 70), sim.sy + (k === 1 ? 70 : 20), k, 0.3); sim.poiDone[0] = 1; }
   if (q.has('scanview')) { fb.scanR = -1; fb.scanEnv = 1; fb.scanText = 'T=184K  CH4 62% H2 31% NH3 5%  MASS 4.1E26 KG  RINGS: ICE  '; }
@@ -486,7 +487,7 @@ function drawChart(): void {
   panel(bt, renderer.cols, renderer.rows, title, lines, -1, footer, 0, wide ? -30 : 0);
   const o = panelOrigin(renderer.cols, renderer.rows, title, lines, footer); o.x += wide ? -30 : 0;
   const px = (x: number): number => o.x + 4 + Math.round(x / 100 * (W - 8)), py = (y: number): number => renderer.rows - 1 - (o.y + 3 + Math.round((100 - y) / 100 * (H - 1)));
-  const range = sim.ship.jumpRange * (1 + 0.1 * sim.up[8]);
+  const range = sim.ship.jumpRange;
   for (let j = 0; j < 72; j++) { const a = j / 72 * Math.PI * 2; bt.put(px(here.x + Math.cos(a) * range), py(here.y + Math.sin(a) * range), G_DOT, 0.15, 0.35, 0.35, 1); }
   for (const s of g.systems) {
     const k = g.known(s.id); if (k === 0) continue;

@@ -17,10 +17,10 @@ export function mountTuner(sim: Sim, onSwap: (id: string) => void): void {
   el('b', head, 'TUNE', 'color:#fd6');
   const sel = el('select', head, '', 'background:#012;color:#9cd;border:1px solid #345;font:inherit');
   for (const s of ROSTER) { const o = el('option', sel, s.name); o.value = s.id; }
-  sel.value = sim.ship.id;
+  sel.value = sim.base.id;
   const btn = (t: string, f: () => void): void => { const b = el('button', head, t, 'background:#023;color:#9cd;border:1px solid #345;font:inherit;cursor:pointer'); b.onclick = f; };
-  btn('reset', () => { sim.setShip(shipById(sim.ship.id)); sync(); });
-  btn('copy JSON', () => { void navigator.clipboard?.writeText(JSON.stringify(sim.ship, null, 2)).then(() => { info.textContent = 'copied'; }, () => { info.textContent = 'clipboard unavailable'; }); });
+  btn('reset', () => { sim.setShip(shipById(sim.base.id)); sync(); });
+  btn('copy JSON', () => { void navigator.clipboard?.writeText(JSON.stringify(sim.base, null, 2)).then(() => { info.textContent = 'copied'; }, () => { info.textContent = 'clipboard unavailable'; }); });
   const info = el('span', head, '', 'color:#6a8');
   sel.onchange = () => { onSwap(sel.value); sync(); };
 
@@ -35,7 +35,7 @@ export function mountTuner(sim: Sim, onSwap: (id: string) => void): void {
     const input = el('input', row, '', 'flex:1;min-width:0');
     input.type = 'range'; input.min = String(f.min); input.max = String(f.max); input.step = String(f.step);
     const val = el('span', row, '', 'width:56px;text-align:right');
-    input.oninput = () => { setField(sim.ship, f.key, parseFloat(input.value)); val.textContent = input.value; readout(); };
+    input.oninput = () => { setField(sim.base, f.key, parseFloat(input.value)); sim.refreshShip(); val.textContent = input.value; readout(); };
     rows.push({ key: f.key, input, val });
   }
   el('div', root, 'HARDPOINTS', 'color:#fd6;margin-top:6px');
@@ -47,14 +47,15 @@ export function mountTuner(sim: Sim, onSwap: (id: string) => void): void {
     for (let i = 0; i < (parseInt(nFixed.value, 10) || 0); i++) a.push('fixed');
     for (let i = 0; i < (parseInt(nTur.value, 10) || 0); i++) a.push('turret');
     if (a.length === 0) a.push('fixed');
-    sim.ship.hardpoints.length = 0; for (const h of a) sim.ship.hardpoints.push(h);
+    sim.base.hardpoints.length = 0; for (const h of a) sim.base.hardpoints.push(h);
+    sim.refreshShip();
     readout();
   };
   nFixed.oninput = setHp; nTur.oninput = setHp;
 
   function readout(): void {
-    const d = derive(sim.ship), iss = validate(sim.ship);
-    let t = `${sim.ship.name}  ${sim.ship.role}\n${sim.ship.quirk}\n\n`;
+    const d = derive(sim.base), iss = validate(sim.base);
+    let t = `${sim.base.name}  ${sim.base.role}\n${sim.base.quirk}\n\n`;
     t += `accel ${d.accel.toFixed(1)} u/s2   boost ${d.boostAccel.toFixed(1)}\n`;
     t += `top ${d.topSpeed.toFixed(0)}   boost top ${d.boostTop.toFixed(0)} u/s\n`;
     t += `0-95% ${d.timeToTop.toFixed(2)} s   stop ${d.stopDist.toFixed(0)} u\n`;
@@ -66,10 +67,10 @@ export function mountTuner(sim: Sim, onSwap: (id: string) => void): void {
     out.textContent = t;
   }
   function sync(): void {
-    sel.value = sim.ship.id;
-    for (const r of rows) { const v = getField(sim.ship, r.key); r.input.value = String(v); r.val.textContent = String(+v.toFixed(3)); }
-    nFixed.value = String(sim.ship.hardpoints.filter(h => h === 'fixed').length);
-    nTur.value = String(sim.ship.hardpoints.filter(h => h === 'turret').length);
+    sel.value = sim.base.id;
+    for (const r of rows) { const v = getField(sim.base, r.key); r.input.value = String(v); r.val.textContent = String(+v.toFixed(3)); }
+    nFixed.value = String(sim.base.hardpoints.filter(h => h === 'fixed').length);
+    nTur.value = String(sim.base.hardpoints.filter(h => h === 'turret').length);
     readout();
   }
   sync();

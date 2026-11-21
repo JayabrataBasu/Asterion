@@ -51,6 +51,8 @@ mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 
 // ---- player hull state (set per instance in main): gS = ship-specific state 0..1, gP = unmirrored local position
 float gS = 0.0; vec2 gP = vec2(0.0);
+// module bits on player hulls (M7): 1 missile pods, 2 sensor dish, 4 armour plating
+float gM = 0.0;
 
 // ---- wren: original all-rounder. Swept delta wings with raked feather tips, canards, one engine pod per side, split tail. ~26 units
 float fPlayer(vec2 q, float thr, out float h, out float mt, out vec3 dp){
@@ -350,7 +352,17 @@ float fTend(vec2 q, float thr, out float h, out float mt, out vec3 dp){
   return min(dH, dFl);
 }
 
+float field0(int ty, vec2 q, float thr, out float h, out float mt, out vec3 dp);
+/** Player hulls grow visible module hardware: missile pods under the wings, a sensor dish on the spine. */
 float field(int ty, vec2 q, float thr, out float h, out float mt, out vec3 dp){
+  float d = field0(ty, q, thr, h, mt, dp);
+  if (gM < 0.5 || !(ty == 0 || (ty >= 14 && ty <= 20))) return d;
+  float podY = ty == 0 ? 4.5 : ty == 14 ? 3.0 : ty == 15 ? 8.4 : ty == 16 ? 4.0 : ty == 17 ? 9.2 : ty == 18 ? 6.0 : ty == 19 ? -6.2 : 7.5;
+  if (mod(gM, 2.0) >= 1.0) { float dp2 = sdUneven(q, vec2(-3.0, podY), vec2(3.5, podY), 0.9, 0.45); if (dp2 < d) mt = 0.0; d = min(d, dp2); h = max(h, bev(-dp2, 0.7) * 0.9); dp.z = min(dp.z, dp2); }
+  if (mod(floor(gM / 2.0), 2.0) >= 1.0) { float dd = abs(length(q - vec2(-1.5, 0.0)) - 1.5) - 0.3; if (dd < d) mt = 0.0; d = min(d, dd); h = max(h, bev(-dd, 0.3) * 1.2); }
+  return d;
+}
+float field0(int ty, vec2 q, float thr, out float h, out float mt, out vec3 dp){
   if (ty == 0) return fPlayer(q, thr, h, mt, dp);
   if (ty == 1) return fDrone(q, thr, h, mt, dp);
   if (ty == 2) return fGun(q, thr, h, mt, dp);
@@ -580,7 +592,7 @@ void main(){
   if (ty <= 3 || ty == 8 || ty >= 9) {
     bool isSt = ty == 8, noMir = isSt || ty == 19;
     float thr = aux;
-    gS = seed; gP = p;
+    gM = (ty == 0 || (ty >= 14 && ty <= 20)) ? floor(seed / 2.0) : 0.0; gS = seed - 2.0 * gM; gP = p;
     vec2 q = noMir ? p : vec2(p.x, abs(p.y));
     float h, mt; vec3 dp;
     float d = isSt ? fStation(q, uTime, h, mt, dp) : field(ty, q, thr, h, mt, dp);
@@ -611,7 +623,8 @@ void main(){
       float sgn = noMir ? 1.0 : (p.y >= 0.0 ? 1.0 : -1.0);
       vec3 n = normalize(vec3(-(h1 - h) / e * 1.6, -(h2 - h) / e * 1.6 * sgn, 1.0));
       vec3 emis; float spec;
-      vec3 al = paint(ty, q, p, dp, h, thr, seed, emis, spec);
+      vec3 al = paint(ty, q, p, dp, h, thr, gS, emis, spec);
+      if (mod(floor(gM / 4.0), 2.0) >= 1.0) al *= 1.0 - 0.32 * panel(q.x * 0.9, 0.09);   // armour plating rows
       float diff = clamp(dot(n, L3), 0.0, 1.0);
       float sp = pow(max(dot(n, normalize(L3 + vec3(0.0, 0.0, 1.0))), 0.0), 22.0) * spec;
       float rim = pow(1.0 - n.z, 2.2);

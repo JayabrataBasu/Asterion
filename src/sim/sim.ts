@@ -1,7 +1,7 @@
 import { Rng, TAU, clamp, hash2, wrapAngle } from '../core/util';
 import { SpatialHash } from './spatial';
 import { MAX_PLANETS, PLANET_STRIDE, SYS, gravReach, SECTOR, STATION_MULT, hasStation, inSystem, nebulaAt, planetParams, planetsNear, sectorOf, stationType } from './world';
-import { ENEMY, FLIGHT, WREN, assignShip, cloneShip, type ShipDef } from './ships';
+import { ENEMY, FLIGHT, MODULES, WREN, applyModules, assignShip, cloneShip, type ShipDef } from './ships';
 
 /**
  * Headless, allocation-free simulation core. Everything is struct-of-arrays; the renderer only reads.
@@ -24,9 +24,8 @@ export const enum Ev { PlayerShot = 1, EnemyShot = 2, Hit = 3, Explosion = 4, Sh
   Scan = 15, Poi = 16, Jump = 17, Wormhole = 18, Hauler = 19, Saved = 20, Cruise = 21 }
 export const enum Up { Gun = 0, Hull = 1, Boost = 2, Thrust = 3, Magnet = 4, Spread = 5, Missile = 6, Reactor = 7, Sensors = 8, Tank = 9 }
 export const UP_N = 10, UP_MAX = 5;
-export const UP_NAME = ['CANNONS', 'HULL PLATING', 'BOOST CELLS', 'ENGINES', 'SCRAP MAGNET', 'SPREAD SHOT', 'MISSILES', 'REACTOR', 'SENSORS', 'FUEL TANKS'];
-export const UP_DESC = ['+fire rate, +damage', '+25 max hull', '+25 boost capacity', '+8% thrust', '+pickup range', 'side bolts', 'homing, ignores shields',
-  '+15% energy, +12% cooling', '+15% sensor range, +20% scan speed', '+20% fuel capacity'];
+export const UP_NAME = MODULES.map(m => m.name);
+export const UP_DESC = MODULES.map(m => m.slot.toLowerCase() + ': ' + m.desc);
 /** Points of interest per system (set by the galaxy layer on arrival). */
 export const MAX_POI = 6;
 const ORE_TAG = 0x0e0e0e0e;
@@ -94,10 +93,13 @@ export class Sim {
   /** Distance travelled this run (units) and trade goods by commodity. */
   dist = 0;
   readonly cargoBy = new Int16Array(6);
-  get fuelMax(): number { return this.ship.fuelMax * (1 + 0.2 * this.up[Up.Tank]); }
-  get sensorR(): number { return this.ship.sensorRange * (1 + 0.15 * this.up[Up.Sensors]); }
+  get fuelMax(): number { return this.ship.fuelMax; }
+  get sensorR(): number { return this.ship.sensorRange; }
   get shieldMax(): number { return this.ship.shieldMax; }
-  setShip(d: ShipDef): void { assignShip(this.ship, d); this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.dashN = this.ship.dashCharges; }
+  /** The hull as designed (tuning panel edits this); `ship` is base + modules. Call refreshShip() after changing either. */
+  readonly base: ShipDef = cloneShip(WREN);
+  setShip(d: ShipDef): void { assignShip(this.base, d); this.refreshShip(); this.dashN = this.ship.dashCharges; }
+  refreshShip(): void { applyModules(this.ship, this.base, this.up); this.boostMax = this.ship.boostCap; }
   shots = 0; hits = 0; dashCd = 0; muzzleT = 0; hpIdx = 0;
   /** Sector events: warn 0 none / 1 comet / 2 meteors / 3 flare / 4 storm; warnT counts the warning down; flare/storm are 0..1 envelopes. */
   warn = 0; warnT = 0; flare = 0; storm = 0;
@@ -117,7 +119,7 @@ export class Sim {
   readonly mang = new Float32Array(MAX_M); readonly mspd = new Float32Array(MAX_M);
   readonly mlife = new Float32Array(MAX_M); readonly mtgt = new Int16Array(MAX_M);
   private mcur = 0;
-  get missileCap(): number { return this.ship.missileCap + (this.up[Up.Missile] > 0 ? 3 + 2 * this.up[Up.Missile] : 0); }
+  get missileCap(): number { return this.ship.missileCap; }
   get objType(): number { return this.objTier % 6; }
   /** Index of the escorted freighter (-1 when none) and how many mission failures this run. */
   frIdx = -1; escortFails = 0;
@@ -126,8 +128,8 @@ export class Sim {
   readonly scvx = new Float32Array(MAX_S); readonly scvy = new Float32Array(MAX_S);
   readonly scl = new Float32Array(MAX_S); readonly scv = new Float32Array(MAX_S);
   private scur = 0;
-  get hpMax(): number { return this.ship.hullMax + 25 * this.up[Up.Hull]; }
-  get tractorR(): number { return this.ship.tractor + 16 * this.up[Up.Magnet]; }
+  get hpMax(): number { return this.ship.hullMax; }
+  get tractorR(): number { return this.ship.tractor; }
   /** 0 calm, 1 build, 2 peak, 3 lull (90 s cycle) */
   get phase(): number { const c = this.time % 90; return c < 20 ? 0 : c < 50 ? 1 : c < 75 ? 2 : 3; }
 
@@ -222,7 +224,7 @@ export class Sim {
     this.shake = 0; this.flash = 0; this.input = 0;
     this.alive = true; this.deadT = 0;
     this.sx = 0; this.sy = 0; this.svx = 0; this.svy = 0; this.sa = 0.3; this.spx = 0; this.spy = 0; this.spa = 0.3;
-    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.fuel = this.fuelMax; this.cruise = false; this.jumpT = 0; this.scanP = 0; this.scanIdx = -1; this.dist = 0; this.cargoBy.fill(0); this.cargoUsed = 0; this.poiDone.fill(0); this.heat = 0; this.overheat = false; this.firedT = 0; this.wingCd = 3; this.nWing = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
+    this.refreshShip(); this.hp = this.hpMax; this.boostE = this.boostMax; this.cool = 0; this.dashCd = 0; this.dashN = this.ship.dashCharges; this.dashLock = 0; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.fuel = this.fuelMax; this.cruise = false; this.jumpT = 0; this.scanP = 0; this.scanIdx = -1; this.dist = 0; this.cargoBy.fill(0); this.cargoUsed = 0; this.poiDone.fill(0); this.heat = 0; this.overheat = false; this.firedT = 0; this.wingCd = 3; this.nWing = 0; this.shots = 0; this.hits = 0; this.scrapTotal = 0;
     this.objKills = 0; this.objTarget = 6; this.objTier = 0; this.nextBoss = 150; this.frIdx = -1; this.escortFails = 0; this.sw = 0;
     this.wasBoost = false; this.warn = 0; this.warnT = 0; this.flare = 0; this.storm = 0; this.flareT = 0; this.stormT = 0; this.ecl = 0; this.mega = 0; this.eclT = 0; this.megaT = 0; this.meteorLeft = 0; this.evtNext = 40; this.lastEvt = 0; this.haulCd = 45; this.scl.fill(0); this.dockable = -1; this.nBoss = 0;
     this.caches.clear(); this.slowT = 0; this.bossKills = 0; this.missiles = this.missileCap; this.missileCd = 0; this.mlife.fill(0); this.eshield.fill(0);
@@ -275,7 +277,7 @@ export class Sim {
     let turn = 0;
     if (inp & In.Left) turn += 1;
     if (inp & In.Right) turn -= 1;
-    this.boostMax = S.boostCap + 25 * this.up[Up.Boost];
+    this.boostMax = S.boostCap;
     if (this.aimOn) { this.sw = 0; const tr = S.turnRate * FLIGHT.AIM_TURN_K, da = wrapAngle(this.aimAng - this.sa); this.sa += clamp(da * 8, -tr * DT * 1.15, tr * DT * 1.15); }
     else {
       if (turn !== 0) this.sw = clamp(this.sw + turn * S.turnAccel * DT, -S.turnRate, S.turnRate);
@@ -292,7 +294,7 @@ export class Sim {
     if ((inp & In.Cruise) && !(this.prevCruiseIn)) this.toggleCruise();
     this.prevCruiseIn = (inp & In.Cruise) !== 0;
     if (inp & In.Thrust) {
-      let a = S.thrustFwd / S.mass * (1 + 0.08 * this.up[Up.Thrust]);
+      let a = S.thrustFwd / S.mass;
       if (this.fuel <= 0) a *= 0.3;                                          // dry tanks: thrusters on reserve
       else if ((inp & In.Boost) && this.boostE > 1 && !this.cruise) { a *= S.boostMult; this.boostE -= S.boostDrain * DT; this.boosting = true; }
       if (this.cruise) a *= 3;
@@ -373,7 +375,7 @@ export class Sim {
     const nhp = S.hardpoints.length;
     if ((inp & In.Fire) && this.cool <= 0 && !this.overheat && this.energy >= 1 && !this.cruise && this.jumpT <= 0) {
       this.energy -= 1; this.heat += FLIGHT.SHOT_HEAT; this.firedT = 0.6;
-      this.cool = FLIGHT.FIRE_COOL * 2 / nhp / S.fireRateMult * (1 - 0.07 * this.up[Up.Gun]); this.shots++;
+      this.cool = FLIGHT.FIRE_COOL * 2 / nhp / S.fireRateMult; this.shots++;
       this.gunSide = -this.gunSide;
       this.hpIdx = (this.hpIdx + 1) % nhp;
       const turret = S.hardpoints[this.hpIdx] === 'turret', lat = S.muzzle ? S.muzzle[this.hpIdx] ?? 0 : 0;
@@ -395,7 +397,7 @@ export class Sim {
       }
       const bc = Math.cos(ba), bs = Math.sin(ba), bsp = FLIGHT.BOLT_SPEED * S.boltSpeedMult;
       this.shotZ = this.sz;
-      const dm = (1 + 0.3 * this.up[Up.Gun]) * S.damageMult;
+      const dm = S.damageMult;
       this.spawnBullet(ox, oy, this.svx * 0.5 + bc * bsp, this.svy * 0.5 + bs * bsp, 1.05, 0, dm);
       if (this.up[Up.Spread] > 0) for (let sd = -1; sd <= 1; sd += 2) {
         const sa2 = ba + sd * 0.13, ssp = FLIGHT.SIDE_SPEED * S.boltSpeedMult;
@@ -436,11 +438,11 @@ export class Sim {
 
   /** Energy, heat, shields, signature and the hull-specific quirks that tick every frame. */
   private updatePower(S: ShipDef): void {
-    this.energy = Math.min(S.energyMax, this.energy + S.energyRegen * (1 + 0.15 * this.up[Up.Reactor]) * DT);
+    this.energy = Math.min(S.energyMax, this.energy + S.energyRegen * DT);
     if (this.hotSys && this.sx * this.sx + this.sy * this.sy < 1100 * 1100) this.heat += 6 * DT;      // close to a hot star
     if (this.radiation > 0) this.hurt(this.radiation * DT, Dmg.Em);
     if (this.boosting) this.heat += FLIGHT.BOOST_HEAT * DT;
-    this.heat = Math.max(0, this.heat - S.heatDissipation * (1 + 0.12 * this.up[Up.Reactor]) * DT);
+    this.heat = Math.max(0, this.heat - S.heatDissipation * DT);
     if (this.heat > S.heatMax) { this.overheat = true; this.heat = Math.min(this.heat, S.heatMax * 1.25); this.hurt((this.heat - S.heatMax) * 0.4 * DT + 2 * DT, Dmg.Thermal); }
     else if (this.overheat && this.heat < S.heatMax * 0.5) this.overheat = false;
     const stormHere = Math.max(this.storm, this.zoneStorm) > 0.3 && (!this.vert || this.sz > -V_TOL);   // storms reach Mid and High only
@@ -496,7 +498,7 @@ export class Sim {
     if (best >= 0) {
       if (best !== this.scanIdx) { this.scanIdx = best; this.scanP = 0; }
       const jam = (nebulaAt(sectorOf(this.sx), sectorOf(this.sy)) > 0.5 || Math.max(this.storm, this.zoneStorm) > 0.3) && S.nebulaScan < 1 ? 0.5 : 1;
-      this.scanP += DT * S.scanRate * (1 + 0.2 * this.up[Up.Sensors]) * jam / 2.5;
+      this.scanP += DT * S.scanRate * jam / 2.5;
       if (this.scanP >= 1) { this.emit(Ev.Scan, this.scanList[best * 3], this.scanList[best * 3 + 1], best); this.scanP = 0; this.scanIdx = -1; this.scanCd = 0.8; }
     } else { this.scanP = Math.max(0, this.scanP - DT * 2); if (this.scanP === 0) this.scanIdx = -1; }
     // ---- cruise interruptions: hostiles, gravity wells
@@ -1059,12 +1061,12 @@ export class Sim {
     const l = this.up[u];
     if (l >= UP_MAX || this.scrap < this.price(u)) return false;
     this.scrap -= this.price(u); this.up[u] = l + 1;
-    this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost];
+    this.refreshShip();
     return true;
   }
 
   /** Free repair + refill while docked. */
-  serviceShip(): void { this.cruise = false; this.hp = this.hpMax; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.boostMax = this.ship.boostCap + 25 * this.up[Up.Boost]; this.boostE = this.boostMax; this.emit(Ev.Dock, this.sx, this.sy, 1); }
+  serviceShip(): void { this.cruise = false; this.hp = this.hpMax; this.shield = this.ship.shieldMax; this.energy = this.ship.energyMax; this.heat = 0; this.overheat = false; this.refreshShip(); this.boostE = this.boostMax; this.fuel = Math.max(this.fuel, this.fuelMax * 0.25); this.emit(Ev.Dock, this.sx, this.sy, 1); }
 
   // ===================================================================== spatial hash + entities
   private rebuildHash(): void {

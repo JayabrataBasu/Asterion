@@ -52,3 +52,10 @@
 - Living galaxy: a tick every 3 minutes of play applies data-driven events (pirate surges, booms, famine, blockades, lost freighters, faction fire, truces, rumours). Kills, destroyed haulers, trade and defended stations move the numbers; piracy scales enemy pressure in that system.
 - News ticker (dim, top row, `K` skips, option to disable). Station services: sell survey data, refuel, trade goods (buy/sell per commodity, hold = `cargo`; Mule's cargo soaks damage). Ship logs: the optional mystery of the quiet lanes in 8 fragments, plus recovered derelict logs.
 - Game-over summary adds ship, distance, survey % and notable events of the run.
+
+## M7 — integration and progression
+- Modules: the ten station upgrades are now data (`MODULES` in ships.ts) in five families (weapons, hull, engine, reactor, utility) applying additive / multiplicative modifiers to the hull's ShipDef. The sim reads only the effective def (`sim.ship` = `sim.base` + modules). New slots: reactor, sensors, fuel tanks. Cannon fire rate is now linear (+8% per level).
+- Module art: missile pods, sensor dish and armour plating rows appear on any hull carrying them.
+- Economy loop: scrap (kills, salvage, ore), survey data (scans, sold at stations), trade goods (price differences between systems); unlocks read lifetime stats from all of it.
+- Daily seed seeds the run and the whole galaxy (daily galaxy state is not saved). Game-over summary and the copied result line list ship, distance, survey % and notable events.
+- Wren trace re-baselined (upgrades now flow through ShipDef).

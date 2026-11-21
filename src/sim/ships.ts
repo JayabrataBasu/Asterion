@@ -284,4 +284,32 @@ export function validate(d: ShipDef): Issue[] {
   if (Math.abs(dev) > BUDGET_TOL) out.push({ level: 'warn', field: 'budget', msg: `stat budget ${dv.budget | 0} is ${(dev * 100).toFixed(0)}% from Wren's ${BUDGET_REF | 0}` });
   return out;
 }
+// ===================================================================== modules (M7)
+/**
+ * Ship modules = the station upgrades. Each level applies additive / multiplicative modifiers to the hull's ShipDef:
+ * value = base * (1 + mul * level) + add * level (+ first once level >= 1). The sim reads only the resulting effective def.
+ */
+export interface ModMod { key: string; mul?: number; add?: number; first?: number }
+export interface Module { name: string; slot: 'WEAPONS' | 'HULL' | 'ENGINE' | 'REACTOR' | 'UTILITY'; desc: string; mods: ModMod[] }
+export const MODULES: Module[] = [
+  { name: 'CANNONS', slot: 'WEAPONS', desc: '+8% fire rate, +30% damage', mods: [{ key: 'fireRateMult', mul: 0.08 }, { key: 'damageMult', mul: 0.3 }] },
+  { name: 'HULL PLATING', slot: 'HULL', desc: '+25 max hull', mods: [{ key: 'hullMax', add: 25 }] },
+  { name: 'BOOST CELLS', slot: 'ENGINE', desc: '+25 boost capacity', mods: [{ key: 'boostCap', add: 25 }] },
+  { name: 'ENGINES', slot: 'ENGINE', desc: '+8% thrust', mods: [{ key: 'thrustFwd', mul: 0.08 }, { key: 'thrustLat', mul: 0.08 }, { key: 'thrustRev', mul: 0.08 }] },
+  { name: 'SCRAP MAGNET', slot: 'UTILITY', desc: '+16 pickup range', mods: [{ key: 'tractor', add: 16 }] },
+  { name: 'SPREAD SHOT', slot: 'WEAPONS', desc: 'side bolts', mods: [] },
+  { name: 'MISSILES', slot: 'WEAPONS', desc: 'homing, ignores shields', mods: [{ key: 'missileCap', add: 2, first: 3 }] },
+  { name: 'REACTOR', slot: 'REACTOR', desc: '+15% energy, +12% cooling', mods: [{ key: 'energyRegen', mul: 0.15 }, { key: 'heatDissipation', mul: 0.12 }] },
+  { name: 'SENSORS', slot: 'UTILITY', desc: '+15% range, +20% scan, +10% jump', mods: [{ key: 'sensorRange', mul: 0.15 }, { key: 'scanRate', mul: 0.2 }, { key: 'jumpRange', mul: 0.1 }] },
+  { name: 'FUEL TANKS', slot: 'UTILITY', desc: '+20% fuel capacity', mods: [{ key: 'fuelMax', mul: 0.2 }] },
+];
+/** Write base + module levels into dst (in place, allocation-free after the first call). */
+export function applyModules(dst: ShipDef, base: ShipDef, up: ArrayLike<number>): void {
+  assignShip(dst, base);
+  for (let i = 0; i < MODULES.length; i++) {
+    const l = up[i] ?? 0; if (l <= 0) continue;
+    for (const m of MODULES[i].mods) setField(dst, m.key, getField(base, m.key) * (1 + (m.mul ?? 0) * l) + (m.add ?? 0) * l + (m.first ?? 0));
+  }
+}
+
 export function bar(v: number, w = 10): string { const n = Math.max(0, Math.min(w, Math.round(v / 100 * w))); return '#'.repeat(n) + '.'.repeat(w - n); }

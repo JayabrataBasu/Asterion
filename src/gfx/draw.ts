@@ -239,7 +239,7 @@ export class FrameBuilder {
       const target = s.thrusting ? (s.boosting ? 1.35 : 0.9) : 0.12;
       this.thrS += (target - this.thrS) * 0.22;
       const S = s.ship, rk = S.radius / 2.4;
-      sp.add(x, y, a, S.artSize, S.art, this.hullState(), s.hitFlash * 0.8, this.thrS, 0.72, this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
+      sp.add(x, y, a, S.artSize, S.art, this.hullState() + 2 * ((s.up[6] > 0 ? 1 : 0) | (s.up[8] >= 2 ? 2 : 0) | (s.up[1] >= 3 ? 4 : 0)), s.hitFlash * 0.8, this.thrS, 0.72, this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
       if (S.darkSig >= 1 || this.dark < 0.5) gl.add(x, y, 9, 0.16, 0.18, 0.24);
       if (s.thrusting) {
         const ca = Math.cos(a), sa = Math.sin(a);

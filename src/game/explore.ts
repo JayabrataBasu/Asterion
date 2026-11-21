@@ -181,7 +181,7 @@ export class Explorer {
     if (to === from) return 'already here';
     if (g.known(to) === 0) return 'no fix on that system';
     const d = g.dist(from, to);
-    if (d > s.ship.jumpRange * (1 + 0.1 * s.up[8])) return 'out of jump range (' + d.toFixed(1) + ' / ' + s.ship.jumpRange.toFixed(0) + ' LY)';
+    if (d > s.ship.jumpRange) return 'out of jump range (' + d.toFixed(1) + ' / ' + s.ship.jumpRange.toFixed(0) + ' LY)';
     const cost = Galaxy.jumpFuel(d, s.ship.fuelBurn);
     if (s.fuel < cost) return 'not enough fuel (' + cost + ' needed)';
     s.fuel -= cost; this.pendingJump = to;
