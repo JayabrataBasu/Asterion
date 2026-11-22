@@ -3,3 +3,7 @@ dist
 *.log
 .DS_Store
 .superpowers
+
+# generated screenshots: regenerate with scripts/golden.mjs, never commit
+docs/screens/
+test/golden/

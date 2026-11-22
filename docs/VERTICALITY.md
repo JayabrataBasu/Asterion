@@ -14,10 +14,7 @@ and every height check passes, so the Wren regression trace is unchanged with th
 
 ## Side by side
 
-Same scene, same seed and spawn, vertical off then on:
-
-- `docs/screens/vert_off.png` / `docs/screens/vert_on.png` (combat near the home asteroid field)
-- `docs/screens/vert_off_planet.png` / `docs/screens/vert_on_planet.png` (home planet)
+Same scene, same seed and spawn, vertical off then on: run `node scripts/golden.mjs shots` to regenerate the `vert_off` / `vert_on` scenes locally (screenshots are not stored in the repo).
 
 ## Honest assessment
 
