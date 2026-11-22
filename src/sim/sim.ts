@@ -258,6 +258,7 @@ export class Sim {
     if (P) t = this.lap(1, t);
     this.rebuildHash();
     this.updateEnts();
+    this.enemiesVsRocks();
     if (P) t = this.lap(2, t);
     this.updateBullets();
     if (P) t = this.lap(3, t);
@@ -690,7 +691,7 @@ export class Sim {
   // ===================================================================== spawning / streaming
   private streamSectors(): void {
     const sx = sectorOf(this.sx), sy = sectorOf(this.sy);
-    if (sx === this.lastSx && sy === this.lastSy) return;
+    if (sx === this.lastSx && sy === this.lastSy) { this.loadPending(); return; }
     this.lastSx = sx; this.lastSy = sy;
     // unload far sectors
     let w = 0;
@@ -703,11 +704,23 @@ export class Sim {
       }
     }
     this.nLoaded = w;
-    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-      const tx = sx + dx, ty = sy + dy;
+    // sectors stream in one per tick so crossing a border never stalls a frame; raster order keeps entity slots and RNG draws as before
+    this.nPend = 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { this.pend[this.nPend * 2] = sx + dx; this.pend[this.nPend * 2 + 1] = sy + dy; this.nPend++; }
+    if (this.nLoaded === 0) while (this.nPend > 0) this.loadPending();   // start / reset: the whole 3x3 at once, as before
+    else this.loadPending();
+  }
+  private readonly pend = new Int32Array(18); private nPend = 0;
+  /** Loads the next queued sector that is not already loaded. */
+  private loadPending(): void {
+    while (this.nPend > 0) {
+      const tx = this.pend[0], ty = this.pend[1];
+      this.pend.copyWithin(0, 2, this.nPend * 2); this.nPend--;
       let have = false;
       for (let i = 0; i < this.nLoaded; i++) if (this.loaded[i * 2] === tx && this.loaded[i * 2 + 1] === ty) { have = true; break; }
-      if (!have) { this.loaded[this.nLoaded * 2] = tx; this.loaded[this.nLoaded * 2 + 1] = ty; this.nLoaded++; this.loadSector(tx, ty); this.seedCache(tx, ty); }
+      if (have) continue;
+      this.loaded[this.nLoaded * 2] = tx; this.loaded[this.nLoaded * 2 + 1] = ty; this.nLoaded++; this.loadSector(tx, ty); this.seedCache(tx, ty);
+      return;                                                    // one sector per call
     }
   }
 
@@ -1281,8 +1294,8 @@ export class Sim {
         const kj = this.ek[j];
         if (j === i || kj === Kind.None || kj === Kind.Mine || kj === Kind.Asteroid || kj === Kind.Station || kj === Kind.Wing) continue;
         const dx = this.ex[j] - x, dy = this.ey[j] - y;
-        if (dx * dx + dy * dy < 50 * 50 && this.ehp[j] < KIND_HP[kj]) {
-          this.ehp[j] = Math.min(KIND_HP[kj], this.ehp[j] + 1.2);
+        if (dx * dx + dy * dy < 50 * 50 && this.ehp[j] < KIND_HP[kj] && this.eflash[j] < 0.05) {   // no healing a unit that is being shot: tenders used to out-heal the player's fire
+          this.ehp[j] = Math.min(KIND_HP[kj], this.ehp[j] + 0.6);
           this.spawnParticle(this.ex[j], this.ey[j], 0, 8, 0.5, PK.Spark, Col.Green, 1);
         }
       }
@@ -1361,7 +1374,7 @@ export class Sim {
     const k = this.ek[j];
     if (k === Kind.Station) { this.sparks(this.ex[j] + (this.rng.next() - 0.5) * 20, this.ey[j] + (this.rng.next() - 0.5) * 20, 3, Col.Amber, 26); return; }
     if (this.eshield[j] > 0) { this.eshield[j] -= dmg; this.eflash[j] = 0.4; this.sparks(this.ex[j], this.ey[j], 3, Col.Cyan, 36); this.emit(Ev.Hit, this.ex[j], this.ey[j], dmg); return; }
-    if (k === Kind.Comet) return;                                  // bolts pass through comets
+    if (k === Kind.Comet) { this.sparks(this.ex[j], this.ey[j], 3, Col.Cyan, 30); return; }   // comets are solid and unbreakable: the bolt is stopped, the comet is unharmed
     this.ehp[j] -= dmg; this.eflash[j] = 1;
     this.evx[j] += ix * 0.02; this.evy[j] += iy * 0.02;
     if ((k <= Kind.Minelayer || k >= Kind.Boss) && k !== Kind.None && this.es[j] === St.Patrol) this.es[j] = St.Chase;
@@ -1462,6 +1475,30 @@ export class Sim {
     this.depth--;
   }
 
+  /** Enemy ships are solid against rocks: overlapping pairs are pushed apart by mass (the lighter one moves more) and bounce. No damage. */
+  private enemiesVsRocks(): void {
+    const h = this.hash, inv = h.inv;
+    for (let i = 0; i < MAX_E; i++) {
+      const k = this.ek[i];
+      if (k === Kind.None || k === Kind.Asteroid || k === Kind.Station || k === Kind.Mine || k === Kind.Comet || k === Kind.Wing) continue;
+      const bi = bodyOf(k, this.er[i]), cx = Math.floor(this.ex[i] * inv), cy = Math.floor(this.ey[i] * inv);
+      for (let gy = cy - 1; gy <= cy + 1; gy++) for (let gx = cx - 1; gx <= cx + 1; gx++) {
+        for (let j = h.head[SpatialHash.key(gx, gy)]; j >= 0; j = h.next[j]) {
+          if (this.ek[j] !== Kind.Asteroid || (this.vert && Math.abs(this.ez[j] - this.ez[i]) > V_TOL)) continue;
+          const dx = this.ex[i] - this.ex[j], dy = this.ey[i] - this.ey[j], d = Math.sqrt(dx * dx + dy * dy) + 1e-4, pen = bi + bodyOf(Kind.Asteroid, this.er[j]) - d;
+          if (pen <= 0) continue;
+          const nx = dx / d, ny = dy / d, m1 = massOf(k, this.er[i]), m2 = massOf(Kind.Asteroid, this.er[j]), s1 = m2 / (m1 + m2), s2 = m1 / (m1 + m2);
+          this.ex[i] += nx * pen * s1; this.ey[i] += ny * pen * s1; this.ex[j] -= nx * pen * s2; this.ey[j] -= ny * pen * s2;
+          const rv = (this.evx[i] - this.evx[j]) * nx + (this.evy[i] - this.evy[j]) * ny;
+          if (rv < 0) {
+            const jimp = 1.4 * -rv / (1 / m1 + 1 / m2);
+            this.evx[i] += nx * jimp / m1; this.evy[i] += ny * jimp / m1; this.evx[j] -= nx * jimp / m2; this.evy[j] -= ny * jimp / m2;
+          }
+        }
+      }
+    }
+  }
+
   /** Cached collision shape of the current hull. */
   private shape: HullShape = hullShape(0); private shapeArt = -1;
   private hullCircles(): HullShape {
@@ -1486,7 +1523,7 @@ export class Sim {
     for (let gy = y0; gy <= y1; gy++) for (let gx = x0; gx <= x1; gx++) {
       for (let j = h.head[SpatialHash.key(gx, gy)]; j >= 0 && nc < this.cand.length; j = h.next[j]) {
         const k = this.ek[j];
-        if (k === Kind.None || k === Kind.Mine || k === Kind.Comet || k === Kind.Wing) continue;
+        if (k === Kind.None || k === Kind.Mine || k === Kind.Wing) continue;
         if (this.vert && k !== Kind.Station && Math.abs(this.ez[j] - this.sz) > V_TOL) continue;   // different band: pass over / under
         this.cand[nc++] = j;
       }
@@ -1515,7 +1552,7 @@ export class Sim {
         this.sx += bnx * bestPen; this.sy += bny * bestPen;       // rest exactly on the surface
         const rvx = this.svx - this.evx[bj], rvy = this.svy - this.evy[bj], vn = rvx * bnx + rvy * bny;
         if (vn < 0) {
-          const imp = -vn, m1 = S.mass, m2 = massOf(k, this.er[bj]), solid = k === Kind.Station;
+          const imp = -vn, m1 = S.mass, m2 = massOf(k, this.er[bj]), solid = k === Kind.Station || k === Kind.Comet;
           const jimp = (1 + 0.4) * imp / (1 / m1 + (solid ? 0 : 1 / m2));      // restitution 0.4: weight decides who gets thrown
           this.svx += bnx * jimp / m1; this.svy += bny * jimp / m1;
           if (!solid) { this.evx[bj] -= bnx * jimp / m2; this.evy[bj] -= bny * jimp / m2; }
@@ -1565,32 +1602,36 @@ export class Sim {
         const o = k * PLANET_STRIDE, dx = nx - this.pl[o], dy = ny - this.pl[o + 1], r = this.pl[o + 2];
         if (dx * dx + dy * dy < r * r) { dead = true; this.sparks(nx, ny, 3, Col.Gray, 24); }
       }
-      if (!dead && this.bown[i] === 0) {
-        const sdx = nx - ox, sdy = ny - oy, sl = sdx * sdx + sdy * sdy + 1e-6;
+      if (!dead) {                                                    // swept hash lookup. Player bolts hit anything solid; enemy bolts are stopped by rocks only (cover), which they do not damage
+        const own = this.bown[i], sdx = nx - ox, sdy = ny - oy, sl = sdx * sdx + sdy * sdy + 1e-6;
         const cx = Math.floor(nx * inv), cy = Math.floor(ny * inv);
         for (let gy = cy - 1; gy <= cy + 1 && !dead; gy++) for (let gx = cx - 1; gx <= cx + 1 && !dead; gx++) {
           for (let j = h.head[SpatialHash.key(gx, gy)]; j >= 0; j = h.next[j]) {
-            if (this.ek[j] === Kind.None || this.ek[j] === Kind.Freighter || this.ek[j] === Kind.Wing) continue;
-            if (this.vert && this.ek[j] !== Kind.Station && Math.abs(this.ez[j] - this.bz[i]) > V_TOL) continue;
+            const kj = this.ek[j];
+            if (kj === Kind.None || kj === Kind.Wing || (own === 0 ? kj === Kind.Freighter : kj !== Kind.Asteroid)) continue;
+            if (this.vert && kj !== Kind.Station && Math.abs(this.ez[j] - this.bz[i]) > V_TOL) continue;
             let t = ((this.ex[j] - ox) * sdx + (this.ey[j] - oy) * sdy) / sl;
             t = t < 0 ? 0 : t > 1 ? 1 : t;
             const qx = ox + sdx * t - this.ex[j], qy = oy + sdy * t - this.ey[j];
-            const rr = this.er[j] + 0.6 + (this.aimAssist === 1 && this.isAimTarget(this.ek[j]) ? AIM_ASSIST.A_BONUS : 0);
+            const rr = this.er[j] + 0.6 + (own === 0 && this.aimAssist === 1 && this.isAimTarget(kj) ? AIM_ASSIST.A_BONUS : 0);
             if (qx * qx + qy * qy < rr * rr) {
-              this.hitEnt(j, this.bdmg[i], this.bvx[i], this.bvy[i]); this.hits++;
+              if (own === 0) { this.hitEnt(j, this.bdmg[i], this.bvx[i], this.bvy[i]); this.hits++; } else this.sparks(nx, ny, 2, Col.Gray, 24);
               dead = true; break;
             }
           }
         }
-      } else if (!dead && this.frIdx >= 0 && this.ek[this.frIdx] === Kind.Freighter && (nx - this.ex[this.frIdx]) ** 2 + (ny - this.ey[this.frIdx]) ** 2 < (KIND_R[Kind.Freighter] + 0.8) ** 2) {
-        dead = true; this.hitEnt(this.frIdx, this.bdmg[i] * 0.6, this.bvx[i], this.bvy[i]);
-      } else if (!dead && this.alive) {
-        const dx = nx - this.sx, dy = ny - this.sy, rr = this.ship.radius + 0.6;
-        if (dx * dx + dy * dy < rr * rr && (!this.vert || Math.abs(this.bz[i] - this.sz) <= V_TOL)) {
-          dead = true;
-          const l = Math.sqrt(this.bvx[i] * this.bvx[i] + this.bvy[i] * this.bvy[i]) + 1e-4;
-          this.damageShip(this.bdmg[i], this.bvx[i] / l, this.bvy[i] / l, this.btype[i]);
-          this.sparks(nx, ny, 5, Col.Cyan, 36);
+      }
+      if (!dead && this.bown[i] !== 0) {
+        if (this.frIdx >= 0 && this.ek[this.frIdx] === Kind.Freighter && (nx - this.ex[this.frIdx]) ** 2 + (ny - this.ey[this.frIdx]) ** 2 < (KIND_R[Kind.Freighter] + 0.8) ** 2) {
+          dead = true; this.hitEnt(this.frIdx, this.bdmg[i] * 0.6, this.bvx[i], this.bvy[i]);
+        } else if (this.alive) {
+          const dx = nx - this.sx, dy = ny - this.sy, rr = this.ship.radius + 0.6;
+          if (dx * dx + dy * dy < rr * rr && (!this.vert || Math.abs(this.bz[i] - this.sz) <= V_TOL)) {
+            dead = true;
+            const l = Math.sqrt(this.bvx[i] * this.bvx[i] + this.bvy[i] * this.bvy[i]) + 1e-4;
+            this.damageShip(this.bdmg[i], this.bvx[i] / l, this.bvy[i] / l, this.btype[i]);
+            this.sparks(nx, ny, 5, Col.Cyan, 36);
+          }
         }
       }
       if (dead) this.blife[i] = 0;

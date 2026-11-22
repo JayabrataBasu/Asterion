@@ -121,9 +121,9 @@ export interface EnemyDef { name: string; mass: number; thrustFwd: number; maxSp
 const E = (name: string, mass: number, accel: number, maxSpeed: number, turnRate: number, hullMax: number, radius: number, sensorRange: number): EnemyDef =>
   ({ name, mass, thrustFwd: accel * mass, maxSpeed, turnRate, hullMax, radius, sensorRange });
 export const ENEMY: EnemyDef[] = [
-  E('none', 1, 0, 0, 0, 0, 0, 0), E('drone', 20, 120, 64, 7, 2, 1.8, 210), E('gunship', 80, 60, 42, 3.4, 9, 3.6, 230), E('minelayer', 70, 44, 34, 2.4, 6, 3.0, 260),
+  E('none', 1, 0, 0, 0, 0, 0, 0), E('drone', 20, 120, 64, 7, 2, 2.2, 210), E('gunship', 80, 60, 42, 3.4, 9, 4.3, 230), E('minelayer', 70, 44, 34, 2.4, 6, 3.6, 260),
   E('mine', 5, 0, 0, 0, 1, 1.6, 0), E('asteroid', 50, 0, 0, 0, 0, 0, 0), E('station', 1000, 0, 0, 0, 1e9, 11.5, 0), E('boss', 600, 34, 24, 1.6, 110, 10, 420),
-  E('sniper', 50, 44, 30, 3.0, 5, 3.0, 330), E('splitter', 25, 110, 56, 6, 3, 2.6, 220), E('tender', 60, 40, 28, 2.2, 8, 3.4, 250), E('rammer', 30, 200, 96, 9, 2, 1.8, 300),
+  E('sniper', 50, 44, 30, 3.0, 5, 3.6, 330), E('splitter', 25, 110, 56, 6, 3, 3.1, 220), E('tender', 60, 40, 28, 2.2, 8, 4.1, 250), E('rammer', 30, 200, 96, 9, 2, 2.2, 300),
   E('freighter', 400, 10, 14, 1, 40, 5.0, 0), E('comet', 200, 0, 90, 0, 1e9, 4.5, 0), E('hauler', 300, 0, 14, 0, 6, 4.2, 0),
   E('wing', 10, 260, 150, 8, 1e9, 1.2, 0),
 ];
