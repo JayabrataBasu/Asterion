@@ -26,8 +26,8 @@ export interface AtlasInfo {
 }
 
 /** Glyphs the sprite matcher may choose from (structural ASCII; letters excluded on purpose). */
-export const MATCH_CHARS = ".,'`:;!|/\\()[]{}<>-_=+*^#";   // shape glyphs only: @ & $ % read as noise on hull edges
-export const FILL_CHARS = "--==+*##";   // structural only: the backdrop ramp never uses - = + * #
+export const MATCH_CHARS = "/\\|-#";   // tiny vocabulary on purpose: contour-direction edges + one solid, so a ship reads as a shape, not speckle
+export const FILL_CHARS = "########";   // one solid glyph; lighting is carried by flat colour steps in the matcher
 export const MATCH_IDX = new Int32Array(48);
 export let MATCH_N = 0;
 { const seen = new Set<number>(); for (const c of MATCH_CHARS) { const i = CODE2IDX[c.charCodeAt(0)]; if (i && !seen.has(i) && MATCH_N < 48) { seen.add(i); MATCH_IDX[MATCH_N++] = i; } } }

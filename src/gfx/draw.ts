@@ -6,6 +6,8 @@ import { hullShape } from '../sim/hulls';
 import { gi, glyphOfCode } from './atlas';
 import { Spr } from './batch';
 import type { Renderer } from './renderer';
+/** Small enemy hulls draw this much larger so none drops below a readable cell count (their hit radii grow ~1.2x to match). */
+const ES = 1.3;
 
 /**
  * Turns sim state into instances: SDF sprites (ships/rocks/bolts), glyph quads (particles, rings, HUD) and glow sprites.
@@ -182,7 +184,7 @@ export class FrameBuilder {
       if (k !== Kind.Asteroid && k !== Kind.Station) continue;
       this.zE(s.ez[i]); const x = s.ex[i] - s.evx[i] * back, y = s.ey[i] - s.evy[i] * back + this.zoff;
       if (k === Kind.Station) {
-        if (this.visible(x, y, 24)) sp.add(x, y, 0, 24, Spr.Station, s.eseed[i], 0, 0, 0.75, this.shade(x, y));
+        if (this.visible(x, y, 24)) sp.add(x, y, 0, 24, Spr.Station, s.eseed[i], 0, 0, 1.2, this.shade(x, y));
       } else {
         const R = s.er[i];
         if (this.visible(x, y, R * 1.6)) sp.add(x, y, 0, R * 1.5, Spr.Asteroid, s.eseed[i], s.eflash[i] > 0 ? s.eflash[i] * 0.6 : 0, R, 1, this.shade(x, y));
@@ -217,10 +219,10 @@ export class FrameBuilder {
       const sp2 = Math.sqrt(s.evx[i] * s.evx[i] + s.evy[i] * s.evy[i]);
       const thr = Math.min(1, sp2 / (k === Kind.Drone ? 64 : k === Kind.Gunship ? 42 : 34)) * 0.8 + 0.1;
       if (k === Kind.Drone) {
-        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 12, Spr.Drone, s.eseed[i], f, thr, 0.85, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.85, 1); gl.add(x, y, 6, 0.32, 0.05, 0.05); }
+        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 12 * ES, Spr.Drone, s.eseed[i], f, thr, 0.85 * ES, this.shade(x, y)); this.ship(x, y, a, SK * 12 * ES, 0.85 * ES, 1); gl.add(x, y, 6, 0.32, 0.05, 0.05); }
       } else if (k === Kind.Gunship) {
         if (this.visible(x, y, 25)) {
-          sp.add(x, y, a, SK * 17, Spr.Gunship, s.eseed[i], f, thr * (s.es[i] === 2 && s.eaux[i] > 0 ? 1 : 0.9), 0.65, this.shade(x, y)); this.ship(x, y, a, SK * 17, 0.65, 1);
+          sp.add(x, y, a, SK * 17 * ES, Spr.Gunship, s.eseed[i], f, thr * (s.es[i] === 2 && s.eaux[i] > 0 ? 1 : 0.9), 0.65 * ES, this.shade(x, y)); this.ship(x, y, a, SK * 17 * ES, 0.65 * ES, 1);
           gl.add(x, y, 8, 0.30, 0.16, 0.04);
           if (s.eshield[i] > 0) gl.add(x, y, 15, 0.05, 0.25 * Math.min(1, s.eshield[i] / 4), 0.6 * Math.min(1, s.eshield[i] / 4));
           if (ch > 0) gl.add(x + Math.cos(a) * 9, y + Math.sin(a) * 9, 3 + ch * 6, 0.2 + ch * 0.8, 0.1 + ch * 0.5, 0.02);
@@ -233,25 +235,25 @@ export class FrameBuilder {
         }
       } else if (k === Kind.Sniper) {
         if (this.visible(x, y, 18)) {
-          sp.add(x, y, a, SK * 17, Spr.Sniper, s.eseed[i], f, thr, 0.62, this.shade(x, y)); this.ship(x, y, a, SK * 17, 0.62, 1);
+          sp.add(x, y, a, SK * 17 * ES, Spr.Sniper, s.eseed[i], f, thr, 0.62 * ES, this.shade(x, y)); this.ship(x, y, a, SK * 17 * ES, 0.62 * ES, 1);
           gl.add(x, y, 6, 0.08, 0.2, 0.32);
           if (ch > 0) gl.add(x + Math.cos(a) * 10, y + Math.sin(a) * 10, 3 + ch * 7, 0.6 * ch, 0.9 * ch, 1.4 * ch);
         }
       } else if (k === Kind.Splitter) {
-        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 12, Spr.Splitter, s.eseed[i], f, thr, 0.8, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.8, 1); gl.add(x, y, 7, 0.4, 0.28, 0.04); }
+        if (this.visible(x, y, 12)) { sp.add(x, y, a, SK * 12 * ES, Spr.Splitter, s.eseed[i], f, thr, 0.8 * ES, this.shade(x, y)); this.ship(x, y, a, SK * 12 * ES, 0.8 * ES, 1); gl.add(x, y, 7, 0.4, 0.28, 0.04); }
       } else if (k === Kind.Rammer) {
         if (this.visible(x, y, 10)) {
           const pz = 0.6 + 0.4 * Math.sin(time * 14 + i);
-          sp.add(x, y, a, SK * 12, Spr.Rammer, s.eseed[i], Math.max(f, 0.15 * pz), thr, 0.62, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.62, 1); gl.add(x, y, 6, 0.9 * pz, 0.45 * pz, 0.1);
+          sp.add(x, y, a, SK * 12 * ES, Spr.Rammer, s.eseed[i], Math.max(f, 0.15 * pz), thr, 0.62 * ES, this.shade(x, y)); this.ship(x, y, a, SK * 12 * ES, 0.62 * ES, 1); gl.add(x, y, 6, 0.9 * pz, 0.45 * pz, 0.1);
         }
       } else if (k === Kind.Tender) {
         if (this.visible(x, y, 14)) {
-          sp.add(x, y, a, SK * 15, Spr.Tender, s.eseed[i], f, thr * 0.5, 0.7, this.shade(x, y)); this.ship(x, y, a, SK * 15, 0.7, 1);
+          sp.add(x, y, a, SK * 15 * ES, Spr.Tender, s.eseed[i], f, thr * 0.5, 0.7 * ES, this.shade(x, y)); this.ship(x, y, a, SK * 15 * ES, 0.7 * ES, 1);
           gl.add(x, y, 8, 0.08, 0.45, 0.18);
           gl.add(x, y, 28, 0.02, 0.09 + 0.04 * Math.sin(time * 4), 0.04);
         }
       } else if (this.visible(x, y, 18)) {
-        sp.add(x, y, a, SK * 12, Spr.Minelayer, s.eseed[i], f, thr * 0.7, 0.65, this.shade(x, y)); this.ship(x, y, a, SK * 12, 0.65, 1);
+        sp.add(x, y, a, SK * 12 * ES, Spr.Minelayer, s.eseed[i], f, thr * 0.7, 0.65 * ES, this.shade(x, y)); this.ship(x, y, a, SK * 12 * ES, 0.65 * ES, 1);
         gl.add(x, y, 7, 0.26, 0.06, 0.24);
       }
     }

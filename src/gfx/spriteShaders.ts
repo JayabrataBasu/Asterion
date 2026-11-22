@@ -86,16 +86,19 @@ float fNeedle(vec2 q, float thr, out float h, out float mt, out vec3 dp){
 
 // ---- anvil: squat armoured wedge, side sponsons, four forward barrels
 float fAnvil(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  float dB = sdBox(q - vec2(-3.5, 0.0), vec2(8.0, 2.2)) - 0.5;                       // narrow armoured spine
-  float dHd = sdBox(q - vec2(4.0, 0.0), vec2(2.2, 11.5)) - 0.5;                       // hammerhead crossbar
-  float dBr = min(sdSeg(q, vec2(5.0, 1.1), vec2(13.5, 1.1)) - 0.45, sdSeg(q, vec2(5.0, 3.4), vec2(12.0, 3.4)) - 0.5);   // forward barrels
-  float dP = sdBox(q - vec2(-5.0, 4.6), vec2(2.6, 0.9)) - 0.3;                       // rear sponsons
-  float dE = sdBox(q - vec2(-10.0, 3.0), vec2(1.6, 1.8)) - 0.3;
-  float dH = min(min(min(dB, dHd), dP), min(dBr, dE));
-  float L = 1.0 + 6.0 * thr;
-  float dFl = sdUneven(q, vec2(-11.9, 3.0), vec2(-11.9 - L, 3.0), 1.2, 0.04);
-  h = max(max(bev(-dB, 2.4) * 1.0, bev(-dHd, 1.6) * 1.1), max(max(bev(-dBr, 0.45) * 0.8, bev(-dP, 1.0) * 0.9), bev(-dE, 1.0) * 0.8));
-  dp = vec3(min(dB, dHd), dBr, min(dP, dE));
+  // Millennium-Falcon-style freighter-gunship: a fat saucer with two forward mandibles and a notch between them. The mandibles are the ram prongs and carry the guns.
+  float dDs = sdEll(q - vec2(-1.5, 0.0), vec2(11.0, 11.5));
+  dDs = max(dDs, -sdBox(q - vec2(11.0, 0.0), vec2(6.0, 3.6)));                       // the notch between the mandibles
+  float dMd = sdUneven(q, vec2(2.0, 8.0), vec2(16.5, 5.2), 3.2, 1.8);                // mandible
+  float dBr = sdSeg(q, vec2(15.0, 5.2), vec2(19.5, 5.2)) - 0.7;                      // gun barrel on each mandible tip
+  float dDm = length(q - vec2(0.0, 0.0)) - 2.8;                                      // central dome
+  float dE = sdBox(q - vec2(-13.5, 0.0), vec2(1.2, 8.0)) - 0.3;                      // wide rear thruster bar
+  float dHu = min(dDs, dMd);
+  float dH = min(min(dHu, dBr), min(dDm, dE));
+  float Lf = 1.0 + 6.0 * thr;
+  float dFl = sdUneven(q, vec2(-14.8, 4.0), vec2(-14.8 - Lf, 4.0), 1.3, 0.04);
+  h = max(max(bev(-dDs, 3.0) * 0.9, bev(-dMd, 1.4) * 1.0), max(max(bev(-dBr, 0.45) * 0.8, bev(-dDm, 1.6) * 1.3), bev(-dE, 1.0) * 0.8));
+  dp = vec3(dHu, dBr, min(dDm, dE));
   mt = dFl < dH ? 1.0 : 0.0;
   return min(dH, dFl);
 }
@@ -147,15 +150,15 @@ float fMule(vec2 q, float thr, out float h, out float mt, out vec3 dp){
 
 // ---- shade: flat chevron manta, very low glyph density, fades out while running dark (gS)
 float fShade(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  float dW = sdUneven(q, vec2(10.0, 0.5), vec2(-9.0, 12.5), 2.9, 0.8);              // outer blade
-  float dW2 = sdUneven(q, vec2(5.0, 0.4), vec2(-8.5, 6.0), 2.3, 0.7);                // inner blade, a gap between them
-  float dC = sdEll(q - vec2(1.0, 0.0), vec2(6.5, 3.0));                              // slim core
-  float dSp = sdSeg(q, vec2(-9.0, 12.5), vec2(-12.0, 13.5)) - 0.25;
-  float dH = min(min(dW, dW2), min(dC, dSp));
+  // boomerang flying wing (stealth-bomber silhouette): one broad swept delta with a deep notch at the tail and wingtip fangs
+  float dW = sdTri(q, vec2(16.0, 0.0), vec2(-11.0, 13.5), vec2(-5.0, 0.0)) - 0.3;
+  float dC = sdEll(q - vec2(1.0, 0.0), vec2(8.0, 2.2));                              // raised spine ridge
+  float dSp = sdSeg(q, vec2(-11.0, 13.5), vec2(-14.5, 15.2)) - 0.3;                  // wingtip fang
+  float dH = min(min(dW, dC), dSp);
   float L = 0.8 + 4.0 * thr;
-  float dFl = sdUneven(q, vec2(-3.0, 1.2), vec2(-3.0 - L, 1.2), 0.6, 0.02);
-  h = max(max(bev(-dW, 1.3) * 0.5, bev(-dW2, 1.0) * 0.45), bev(-dC, 1.0) * 0.8);
-  dp = vec3(dC, min(dW, dW2), dSp);
+  float dFl = sdUneven(q, vec2(-5.8, 1.4), vec2(-5.8 - L, 1.4), 0.9, 0.03);
+  h = max(bev(-dW, 2.2) * 0.6, bev(-dC, 1.6) * 0.95);
+  dp = vec3(dC, dW, dSp);
   mt = dFl < dH ? 1.0 : 0.0;
   return min(dH, dFl);
 }
@@ -186,18 +189,17 @@ float hivePods(vec2 q){
   return d;
 }
 float fHive(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  vec2 hc = q - vec2(-1.0, 0.0);
-  float dR = abs(sdHex(hc, 7.2)) - 1.1;                                              // hexagonal ring
-  dR = max(dR, -(sdBox(q - vec2(-9.4, 0.0), vec2(2.4, 2.6))));                      // open bay in the rear
-  float dCore = sdHex(hc, 2.6);
-  float dSpk = min(sdSeg(q, vec2(-1.0, 0.0), vec2(-1.0, 6.3)), sdSeg(q, vec2(-1.0, 0.0), vec2(5.2, 3.6))) - 0.35;
-  float dC = min(min(dR, dCore), dSpk);
-  float dE = sdBox(q - vec2(-11.6, 1.6), vec2(1.4, 1.2)) - 0.2;
-  float dH = min(dC, dE);
+  // carrier: a long keel with a pointed prow and bridge, two big flight-deck pods either side joined by struts, engines at the stern (Battlestar-style)
+  float dSp = min(sdBox(q - vec2(-2.0, 0.0), vec2(12.0, 2.2)) - 0.3, sdTri(q, vec2(18.0, 0.0), vec2(10.0, 2.4), vec2(10.0, 0.0)));
+  float dPd = min(sdBox(q - vec2(-3.5, 9.2), vec2(10.0, 3.0)) - 0.4, sdTri(q, vec2(8.5, 6.2), vec2(8.5, 12.2), vec2(13.0, 6.2)));
+  float dSt = min(sdBox(q - vec2(3.5, 4.4), vec2(1.0, 2.2)), sdBox(q - vec2(-9.0, 4.4), vec2(1.0, 2.2)));
+  float dBr = sdBox(q - vec2(5.0, 0.0), vec2(3.0, 1.5)) - 0.3;                       // bridge tower
+  float dE = sdBox(q - vec2(-14.4, 9.2), vec2(1.4, 1.5)) - 0.2;
+  float dH = min(min(dSp, dPd), min(dSt, dE));
   float L = 0.8 + 4.0 * thr;
-  float dFl = sdUneven(q, vec2(-13.2, 1.6), vec2(-13.2 - L, 1.6), 0.9, 0.04);
-  h = max(max(bev(-dR, 1.1) * 1.1, bev(-dCore, 1.6) * 1.2), max(bev(-dSpk, 0.35) * 0.6, bev(-dE, 0.8) * 0.7));
-  dp = vec3(dC, dE, dC + 0.4);
+  float dFl = sdUneven(q, vec2(-15.8, 9.2), vec2(-15.8 - L, 9.2), 1.0, 0.04);
+  h = max(max(bev(-dSp, 1.6) * 0.9, bev(-dPd, 1.8) * 1.0), max(max(bev(-dBr, 0.8) * 1.3, bev(-dSt, 0.6) * 0.7), bev(-dE, 0.8) * 0.7));
+  dp = vec3(dSp, dPd, min(dBr, dE));
   mt = dFl < dH ? 1.0 : 0.0;
   return min(dH, dFl);
 }
@@ -373,7 +375,7 @@ float field0(int ty, vec2 q, float thr, out float h, out float mt, out vec3 dp);
 float field(int ty, vec2 q, float thr, out float h, out float mt, out vec3 dp){
   float d = field0(ty, q, thr, h, mt, dp);
   if (gM < 0.5 || !(ty == 0 || (ty >= 14 && ty <= 20))) return d;
-  float podY = ty == 0 ? 4.5 : ty == 14 ? 3.0 : ty == 15 ? 8.4 : ty == 16 ? 4.0 : ty == 17 ? 9.2 : ty == 18 ? 6.0 : ty == 19 ? -6.2 : 7.5;
+  float podY = ty == 0 ? 4.5 : ty == 14 ? 3.0 : ty == 15 ? 8.0 : ty == 16 ? 4.0 : ty == 17 ? 9.2 : ty == 18 ? 6.0 : ty == 19 ? -6.2 : ty == 20 ? 9.2 : 7.5;
   if (mod(gM, 2.0) >= 1.0) { float dp2 = sdUneven(q, vec2(-3.0, podY), vec2(3.5, podY), 0.9, 0.45); if (dp2 < d) mt = 0.0; d = min(d, dp2); h = max(h, bev(-dp2, 0.7) * 0.9); dp.z = min(dp.z, dp2); }
   if (mod(floor(gM / 2.0), 2.0) >= 1.0) { float dd = abs(length(q - vec2(-1.5, 0.0)) - 1.5) - 0.3; if (dd < d) mt = 0.0; d = min(d, dd); h = max(h, bev(-dd, 0.3) * 1.2); }
   return d;
@@ -445,10 +447,10 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     float m = min(dp.x, min(dp.y, dp.z));
     col = m == dp.x ? vec3(0.66, 0.84, 1.2) : (m == dp.y ? vec3(0.78, 0.78, 0.86) : vec3(0.85, 0.95, 1.15));   // steel-blue: orange/red is reserved for hostiles
     col *= 1.0 - 0.35 * panel(q.x * 0.55, 0.07) - 0.25 * panel(q.y * 0.6 + 0.25, 0.07);
-    col = mix(col, vec3(1.0, 0.85, 0.12), step(0.5, fract((q.x + q.y) * 0.5)) * smoothstep(0.6, 0.3, abs(q.y - 6.4)) * step(m, dp.z + 0.001));
-    emis += smoothstep(0.6, 0.2, abs(q.x - 5.0)) * smoothstep(0.5, 0.2, abs(q.y - 2.2)) * vec3(1.6, 1.3, 0.2) * (0.5 + 0.5 * blink);
-    if (gS > 0.0) { float lat = gS * 10.0 - 5.0; vec2 tip = vec2(abs(lat) < 2.0 ? 13.5 : 12.0, lat); emis += smoothstep(1.8, 0.0, length(p - tip)) * vec3(2.6, 1.8, 0.7) * 1.5; }
-    emis += smoothstep(1.2, 0.0, length((q - vec2(-11.7, 3.0)) / vec2(1.0, 1.3))) * vec3(1.6, 0.6, 0.2) * (0.4 + thr);
+    col = mix(col, vec3(1.0, 0.85, 0.12), step(0.5, fract((q.x + q.y) * 0.5)) * smoothstep(0.6, 0.3, abs(q.y - 6.6)) * step(m, dp.z + 0.001));
+    emis += smoothstep(1.3, 0.0, length(q - vec2(19.7, 5.2))) * vec3(1.6, 1.3, 0.2) * (0.5 + 0.5 * blink);   // barrel tips
+    if (gS > 0.0) { float lat = gS * 10.0 - 5.0; vec2 tip = vec2(19.5, lat < 0.0 ? -5.2 : 5.2); emis += smoothstep(1.8, 0.0, length(p - tip)) * vec3(2.6, 1.8, 0.7) * 1.5; }
+    emis += smoothstep(1.2, 0.0, length((q - vec2(-15.0, 4.0)) / vec2(1.0, 1.3))) * vec3(1.6, 0.6, 0.2) * (0.4 + thr);
     spec = 0.45;
   } else if (ty == 16) {               // sextant: pale teal kite, glass lens that pulses while scanning, gold petals
     float m = min(dp.x, min(dp.y, dp.z));
@@ -473,9 +475,9 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     spec = 0.35;
   } else if (ty == 18) {               // shade: near-black violet with faint edge light
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(1.35, 1.1, 1.7) : vec3(1.05, 0.85, 1.4);
-    emis += smoothstep(0.5, 0.0, abs(dp.y + 0.3)) * vec3(1.0, 0.35, 1.2) * 0.8;
-    emis += smoothstep(0.8, 0.0, length((q - vec2(-2.8, 1.2)) / vec2(0.7, 0.9))) * vec3(0.7, 0.4, 1.4) * (0.2 + thr);
+    col = m == dp.x ? vec3(1.0, 0.72, 1.6) : vec3(0.6, 0.42, 1.05);
+    emis += smoothstep(-1.3, 0.0, dp.y) * step(dp.y, 0.0) * vec3(1.1, 0.35, 1.6);   // lit wing edge: the outline stays readable on a dark hull
+    emis += smoothstep(0.9, 0.0, length((q - vec2(-5.6, 1.4)) / vec2(0.8, 0.9))) * vec3(0.8, 0.45, 1.6) * (0.4 + thr);
     spec = 0.9;
   } else if (ty == 19) {               // magpie: rust patchwork with teal / grey panels and a yellow arm
     float m = min(dp.x, min(dp.y, dp.z));
@@ -486,12 +488,14 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     emis += smoothstep(0.9, 0.0, length((q - vec2(-9.8, 1.6)) / vec2(0.8, 1.0))) * vec3(1.6, 0.8, 0.3) * (0.4 + thr);
     spec = 0.35;
   } else if (ty == 20) {               // hive: honey hex pods, dark seams; rear bays glow as they iris open
-    col = vec3(1.0, 0.74, 0.20) * (0.75 + 0.25 * smoothstep(0.0, -1.2, dp.x));
-    col *= 1.0 - 0.6 * smoothstep(-0.5, -0.05, dp.x);
-    float bay = min(length(q - vec2(-5.0, 0.0)), length(q - vec2(-7.5, 4.33)));
-    col = mix(col, vec3(0.05, 0.03, 0.02), smoothstep(1.6 * gS, 1.4 * gS - 0.1, bay) * step(0.05, gS));
-    emis += smoothstep(0.4, 0.0, abs(bay - 1.6 * gS)) * vec3(1.8, 0.9, 0.2) * gS;
-    emis += smoothstep(0.9, 0.0, length((q - vec2(-11.4, 1.6)) / vec2(0.8, 1.0))) * vec3(1.6, 0.9, 0.3) * (0.4 + thr);
+    float m = min(dp.x, min(dp.y, dp.z));
+    col = m == dp.x ? vec3(0.85, 0.58, 0.16) : (m == dp.y ? vec3(1.0, 0.78, 0.28) : vec3(0.95, 0.9, 0.75));            // brass keel, honey flight pods, pale bridge
+    col *= 1.0 - 0.3 * panel(q.x * 0.35, 0.05);
+    float slot = smoothstep(0.55, 0.3, abs(q.y - 9.2)) * step(-12.5, q.x) * step(q.x, 3.0) * step(m, dp.y + 0.001);       // hangar slot along each pod
+    col = mix(col, vec3(0.05, 0.03, 0.02), slot * 0.8);
+    emis += slot * vec3(1.8, 0.95, 0.2) * (0.35 + 0.9 * gS);                                                              // glows brighter as the bays open to launch drones
+    emis += smoothstep(0.9, 0.0, length(q - vec2(7.5, 0.0))) * vec3(0.5, 1.3, 1.9) * (0.5 + 0.4 * blink);                // bridge windows
+    emis += smoothstep(0.9, 0.0, length((q - vec2(-16.0, 9.2)) / vec2(0.8, 1.0))) * vec3(1.6, 0.9, 0.3) * (0.4 + thr);
     spec = 0.4;
   } else if (ty == 22) {               // derelict: dark plating rows, scorch, tiny lit windows
     float m = min(dp.x, min(dp.y, dp.z));
@@ -587,7 +591,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     emis += smoothstep(0.9, 0.0, length((q - vec2(-11.0, 2.3)) / vec2(0.8, 1.1))) * vec3(0.5, 1.0, 1.8) * (0.4 + thr);
     spec = 0.6;
   } else {
-    vec3 ringC = vec3(0.42, 0.46, 0.54), hubC = vec3(0.55, 0.58, 0.62), solC = vec3(0.10, 0.22, 0.42);
+    vec3 ringC = vec3(0.72, 0.78, 0.90), hubC = vec3(0.90, 0.92, 0.98), solC = vec3(0.18, 0.40, 0.75);
     float m = min(dp.x, min(dp.y, dp.z));
     col = m == dp.x ? ringC : (m == dp.y ? hubC : solC);
     float r = length(p);
@@ -600,6 +604,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
       col *= 1.0 - 0.3 * panel((a) * 22.0 / 6.28318, 0.04);
     }
     if (m == dp.z) col *= 0.8 + 0.4 * panel(p.x * 0.5 + p.y * 0.5, 0.2);
+    emis += smoothstep(1.2, 0.0, abs(r - 17.0)) * vec3(0.15, 0.55, 0.75) * 0.7;   // glowing outer rim so the depot never melts into space
     emis += smoothstep(0.9, 0.0, length(p - vec2(0.0, 0.0))) * vec3(0.2, 1.8, 0.5) * blink;
     emis += smoothstep(0.7, 0.0, length(abs(p) - vec2(0.0, 24.2))) * vec3(2.0, 0.2, 0.2) * (1.0 - blink);
     spec = 0.5;
@@ -628,7 +633,7 @@ void main(){
     cov = clamp(0.5 - d / px, 0.0, 1.0);
     if (cov <= 0.0) discard;
     if (mt > 0.5) {   // flame: emissive, no lighting
-      float fx0 = ty == 14 ? 12.8 : ty == 18 ? 3.0 : ty == 17 ? 14.3 : 9.0, fln = ty == 14 ? 19.0 : ty == 0 ? 11.0 : 14.0;
+      float fx0 = ty == 14 ? 12.8 : ty == 18 ? 5.0 : ty == 17 ? 14.3 : ty == 15 ? 14.8 : ty == 20 ? 15.8 : 9.0, fln = ty == 14 ? 19.0 : ty == 0 ? 11.0 : 14.0;
       float u = clamp((-p.x - fx0) / fln, 0.0, 1.0);
       float boost = clamp(thr - 0.9, 0.0, 1.0);
       vec3 hot = mix(vec3(2.4, 1.9, 1.2), vec3(1.0, 1.7, 2.6), boost);
@@ -713,7 +718,7 @@ void main(){
     float core = smoothstep(0.9, 0.0, length(p / vec2(1.4, 1.0)));
     col = mix(aux > 0.5 ? vec3(1.9, 0.95, 0.1) : vec3(0.2, 1.7, 0.3), vec3(1.7, 2.3, 1.6), core);
   }
-  if (ty == 18) { cov *= 0.95 - 0.8 * seed; col *= 1.0 - 0.7 * seed; }       // shade: full hull normally, near-invisible running dark
+  if (ty == 18) { cov *= 0.95 - 0.5 * seed; col *= 1.0 - 0.4 * seed; }       // shade: full hull normally, near-invisible running dark
   col += vec3(1.3) * flash;
   if (uSil > 0.5) col = vec3(1.0);
   o = vec4(col * cov, cov);
@@ -759,6 +764,9 @@ void main(){
     }
   }
   vec3 cc = avg * 1.7 + 0.08; cc = mix(vec3(dot(cc, vec3(0.333))), cc, 1.45);   // a touch more saturation so hull colours stay distinct
+  float cm = max(cc.r, max(cc.g, cc.b)) + 1e-4;
+  if (cm <= 1.2) cc = cc / cm * (cm < 0.45 ? 0.6 : cm < 0.8 ? 0.88 : 1.15);   // 3 flat value steps instead of a continuous bevel; emissive (>1.2) stays hot
+  cc *= amin > 0.72 ? 0.72 : 1.45;                                              // dim fill, bright contour glyphs: every hull gets a visible outline
   oA = vec4(cc, float(bg) / 255.0);
   oB = vec4(avg * 0.5, smoothstep(0.3, 0.8, cov));
 }`;

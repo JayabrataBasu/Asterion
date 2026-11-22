@@ -502,6 +502,8 @@ void main(){
     g = int(ma.a * 255.0 + 0.5);
     fg = ma.rgb;
     if (qa < 1.0) { float ll = dot(fg, vec3(0.2126, 0.7152, 0.0722)); fg *= clamp(1.4 / max(ll, 0.02), 1.0, 6.0); fg *= 1.25; }   // brighter glyph ink on a darker tile: same overall brightness, much crisper features   // adaptive contrast: a ship cell never goes darker than a floor
+    { float bl = 1.0 - exp(-dot(s.rgb, vec3(0.2126, 0.7152, 0.0722)) * uExposure), fl = dot(fg, vec3(0.2126, 0.7152, 0.0722));   // keep ship ink above the brightness of the sky behind it
+      fg *= clamp((0.5 + 1.6 * bl) / max(fl, 0.02), 1.0, 3.0); }
     bg = mix(s.rgb * uBgK * (s.a > 0.0 ? 0.04 : 1.0) * qa, mb.rgb, mb.a);
     if (qa < 1.0) bg = max(bg, fg * 0.35 * mb.a);     // hull tile never sinks into the dark zone
   } else {
@@ -529,18 +531,14 @@ void main(){
     }
   }
   if (ma.a <= 0.0) {                                  // dark halo around sprites so ships separate from the backdrop
-    float h = 0.0;
-    h += texelFetch(uMA, min(cell + ivec2(1, 0), uCells - 1), 0).a > 0.0 ? 1.0 : 0.0;
-    h += texelFetch(uMA, max(cell - ivec2(1, 0), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
-    h += texelFetch(uMA, min(cell + ivec2(0, 1), uCells - 1), 0).a > 0.0 ? 1.0 : 0.0;
-    h += texelFetch(uMA, max(cell - ivec2(0, 1), ivec2(0)), 0).a > 0.0 ? 1.0 : 0.0;
-    h += texelFetch(uMA, min(cell + ivec2(1, 1), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;     // diagonals too, so no gap leaks backdrop to the hull edge
-    h += texelFetch(uMA, clamp(cell + ivec2(-1, 1), ivec2(0), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;
-    h += texelFetch(uMA, clamp(cell + ivec2(1, -1), ivec2(0), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;
-    h += texelFetch(uMA, max(cell - ivec2(1, 1), ivec2(0)), 0).a > 0.0 ? 0.5 : 0.0;
+    float h = 0.0;                                     // round falloff to the nearest sprite cell (cells are ~2x taller than wide, so dy counts double)
+    for (int dy = -2; dy <= 2; dy++) for (int dx = -3; dx <= 3; dx++) {
+      if (texelFetch(uMA, clamp(cell + ivec2(dx, dy), ivec2(0), uCells - 1), 0).a > 0.0) h = max(h, 1.0 - length(vec2(float(dx), float(dy) * 2.0)) / 4.5);
+    }
+    h = min(1.0, h * 1.25);
     float slum = dot(s.rgb, vec3(0.2126, 0.7152, 0.0722));
     float glare = 1.0 / (1.0 + 16.0 * max(0.0, slum - 0.25) * (1.0 - qw) * (1.0 - qw));   // very bright backdrop (the sun) is pulled down near a ship so glare never swallows it
-    float dim = (1.0 - 0.9 * min(1.0, h)) * qa * glare;      // dark ring + graded quiet zone: ships always sit in darkness
+    float dim = (1.0 - 0.95 * min(1.0, h)) * qa * glare;      // dark ring + graded quiet zone: ships always sit in darkness
     bg *= dim; fg *= dim;
   }
   if (uReveal.z > 0.0) {                              // typed arrival: the scene writes itself in outward from the centre

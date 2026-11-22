@@ -617,7 +617,7 @@ let camX = 0, camY = 0, camInit = false;
 let combat = 0;
 const THEMES: [number, number, number][] = [[1, 1, 1], [1.55, 0.6, 0.55], [0.6, 1.3, 0.8], [1.2, 0.7, 1.55], [1.4, 1.0, 0.5], [0.7, 1.1, 1.55]];
 const tint: [number, number, number] = [1, 1, 1];
-const style: [number, number, number, number] = [0.78, 1, 1, 0.5];   // per-sector sky look: palette hue, cloud scale, star density, filament strength
+const style: [number, number, number, number] = [0.78, 1, 1, 0.5];   // per-sector sky look: palette hue, cloud scale, star density, filament strength. Cloud scale stays 1: easing it slid the whole nebula after every border crossing
 const forceTheme = parseInt(new URLSearchParams(location.search).get('theme') ?? '-1', 10);   // debug: ?theme=0..5 pins the nebula theme
 if (forceTheme >= 0) { const t0 = THEMES[forceTheme % THEMES.length]; tint[0] = t0[0]; tint[1] = t0[1]; tint[2] = t0[2]; }
 function updateTint(dt: number, x: number, y: number): void {
@@ -625,7 +625,7 @@ function updateTint(dt: number, x: number, y: number): void {
   const th = forceTheme >= 0 ? THEMES[forceTheme % THEMES.length] : (sx === 0 && sy === 0) ? THEMES[0] : THEMES[Math.floor(hash2(sx * 7 + 3, sy * 13 + 1) * THEMES.length) % THEMES.length];
   const k = 1 - Math.exp(-0.8 * dt);
   for (let i = 0; i < 3; i++) tint[i] += (th[i] - tint[i]) * k;
-  const home = sx === 0 && sy === 0, st = home ? [0.78, 1, 1, 0.5] : [hash2(sx * 3 + 17, sy * 5 + 2), 0.7 + 0.9 * hash2(sx * 11 + 1, sy * 7 + 9), 0.75 + 1.0 * hash2(sx * 13 + 5, sy * 17 + 3), hash2(sx * 19 + 7, sy * 23 + 11)];
+  const home = sx === 0 && sy === 0, st = home ? [0.78, 1, 1, 0.5] : [hash2(sx * 3 + 17, sy * 5 + 2), 1, 0.75 + 1.0 * hash2(sx * 13 + 5, sy * 17 + 3), hash2(sx * 19 + 7, sy * 23 + 11)];
   for (let i = 0; i < 4; i++) style[i] += (st[i] - style[i]) * k;
 }
 let layersOn = new URLSearchParams(location.search).has('layers');
