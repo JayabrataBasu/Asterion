@@ -126,3 +126,11 @@
 - Planet surface is resolved after the move, so the ship can never end a tick inside a planet (it used to overlap by up to ~2.6 units at boost speed).
 - Enemy-vs-enemy and enemy-vs-rock separation uses the same body sizes.
 - New tests: test/collision.test.ts (7). Flight-trace fixture regenerated (collisions legitimately change it); one planet-atmosphere test re-placed to match the new body size.
+
+## v4.0-alpha.7
+- Hull-shaped collision: each playable hull collides with a set of circles tracing its drawn silhouette (`src/sim/hulls.ts`), so wing tips, rings, hammerheads and claws touch rocks, enemies and planets where they look like they do. The path each tick is walked in small steps (no tunnelling). Gentle bumps no longer break rocks; hard rams do. The quiet zone around the ship follows the same outline.
+- Crisper ships and structures: they no longer feed bloom, grain, scanlines or colour fringing; darker hull tiles with brighter glyph ink; a drawn inner outline; livelier hull colour.
+- Dreadnought redesigned as a wedge-shaped capital ship (franchise-inspired archetype). Sun-glare suppression near ships; Shade, Mule and Anvil lightened for contrast.
+- Station contracts and faction reputation logic (`src/game/contracts.ts`, 13 tests); not wired into the game yet.
+- Phase H tooling: `?sil=1` silhouette mode, `silhouette` and `sheets` commands, sun-glare / planet-shadow contrast contexts, new golden scene definitions. Golden baselines and `docs/screens/v4` sheets have NOT been regenerated for this version.
+- Test fixes: flight-trace fixture regenerated; the rare-set-piece scheduler test tries several seeds.

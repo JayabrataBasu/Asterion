@@ -12,10 +12,14 @@ describe('scale set pieces', () => {
     }
   });
   it('the random scheduler eventually picks a rare set piece', () => {
-    const s = new Sim(31); s.invuln = 1e9; s.hp = 1e9; let seen = false;
-    for (let i = 0; i < 60 * 60 * 25 && !seen; i++) { s.input = 0; s.step(); if (s.warn >= 5) seen = true; }
+    let seen = false;                                                  // a few seeds: collisions consume random numbers, so any single seed's stream is arbitrary
+    for (const seed of [31, 32, 33, 34, 35]) {
+      const s = new Sim(seed); s.invuln = 1e9; s.hp = 1e9;
+      for (let i = 0; i < 60 * 60 * 25 && !seen; i++) { s.input = 0; s.step(); if (s.warn >= 5) seen = true; }
+      if (seen) break;
+    }
     expect(seen).toBe(true);
-  }, 60000);
+  }, 120000);
 });
 
 describe('catalogue designations', () => {

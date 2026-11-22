@@ -1,6 +1,25 @@
 # Asterion: visual & graphics overhaul plan (v4)
 
-Status: **plan**, nothing here is implemented yet. Baseline is commit `9c4a65c` (v3.3).
+Status: **mostly implemented (v4.0-alpha.6)**; see the status table below. Original baseline was v3.3. The sections after the table are the
+original plan text and are kept for reference; where the table says an item was reversed or changed, the table wins.
+
+### Implementation status
+
+| Phase | Done | Changed / reversed | Not done |
+|---|---|---|---|
+| **A** figure/ground | A3 quiet zone (softened, never below 35% so space is not black), A5 hull contrast floor, A7 nav lights + strobe + idle engine glow, A8 shadow floor (45%) | A1 separate glyph vocabularies reversed (the original ramp is back so the sun bloom stays); A6 allegiance rim removed (it read as a green circle) | A2 true distance field (circles are used), A4 fully cleared backdrop tile, stronger rim light in shadow |
+| **B** ship art | B1/B2 new silhouettes + negative space for every hull except Wren (kept); B4 player drawn larger; B6 bigger slower hangar preview; silhouette-only mode (`?sil=1`) and `silhouette` test | | B3 systematic palette-vs-theme check, B5 panel lines as glyph structure |
+| **C** colour | player mint accent; Anvil steel-blue with hazard stripes; each enemy has its own bright hue | C1 hostile = red was replaced by one hue per enemy type; C3 enemy muting reversed (brighter instead); C4 dotted rim removed with the rim | Magpie mint rim |
+| **D** combat FX | D1 bolt tails + enemy `o` bolts, D2 spark glyphs, D3 shield arcs, D4 glyph explosions | | D4 light flash on nearby hulls, D5 enemy muzzle flashes |
+| **E** backdrop | E1 three-depth nebula, E2 lit dust-lane edges, E4 stellar-class colours + clustered stars, E5 more/brighter galaxies, per-sector palette/scale/density | E6 is per sector, not tied to the system's star class | E3 god-rays blocked by planets, E4 far-layer-only twinkle |
+| **F** planets | F1 city lights, F2 terminator band, F3 latitude gas bands, F4 `( )` atmosphere rim | F5 rings already had occlusion | |
+| **G** hyperspace | G2 palette-tinted tunnel | G1 entry flash + stretch removed again (owner: nothing extra on boost) | G5 halved line count in reduced-FX |
+| **H** tooling | H1 contrast test (8 hulls x 6 themes x home / sun glare / planet shadow), H2 `?theme=` `?idle=1` `?sil=1`, H3 golden scenes per phase (`idle_neb_0..5`, `idle_sun`, `idle_shadow`, `roster_silhouette`, `roster_enemies`, `hangar_*`), H4 before/after sheets (`node scripts/golden.mjs sheets` -> `docs/screens/v4/`) | | |
+| **I** HUD | larger cells at 1440p+, low-hull warning is a pulsing ring around the ship | | |
+
+Related changes made along the way: the black-screen "typed arrival" no longer replays on every sector crossing; all screen-space distortion
+(explosion shock-ring warp, engine heat shimmer) is gone; the camera follow is the original; ships, enemies and rocks are physically solid
+(body radius per kind, swept collision, mass-based impacts; see `test/collision.test.ts`).
 Constraint that does not change: everything on screen is a text glyph. Performance is not the limiter
 (CPU 0.4–0.7 ms/frame, sim 0.1–0.2 ms; the GPU passes are per-cell), so this plan spends GPU work freely,
 but every phase still re-checks `?perf=1` at 1080p.

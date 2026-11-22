@@ -463,6 +463,7 @@ function pollInput(): number {
   if (q.has('sys')) explorer.enter(Math.max(0, Math.min(39, parseInt(q.get('sys')!, 10) | 0)), false);
   if (q.has('setpiece')) { const k = ({ beacon: 0, derelict: 1, pulsar: 2, wormhole: 4, signal: 10 } as Record<string, number>)[q.get('setpiece')!] ?? 1; sim.setPoi(0, sim.sx + (k === 1 ? 40 : 70), sim.sy + (k === 1 ? 70 : 20), k, 0.3); sim.poiDone[0] = 1; }
   if (q.has('scanview')) { fb.scanR = -1; fb.scanEnv = 1; fb.scanText = 'T=184K  CH4 62% H2 31% NH3 5%  MASS 4.1E26 KG  RINGS: ICE  '; }
+  if (q.get('sil') === '1') renderer.sil = true;   // debug: flat white silhouettes, no lights or marks
   if (q.has('idle')) sim.invuln = 0;   // debug: no spawn-invulnerability blink, so screenshots always catch the ship
   if (q.has('ship')) sim.setShip(shipById(q.get('ship')!));
   if (q.has('vert')) sim.vert = q.get('vert') !== '0';
@@ -594,7 +595,7 @@ function drawRoster(cx: number, cy: number, t: number): void {
     for (let i = 0; i < E.length; i++) {
       const [nm, ty, sz, sc, aux] = E[i], wx = cx - 66 + (i % 4) * 44, wy = cy + 28 - Math.floor(i / 4) * 28;
       renderer.sprites.add(wx, wy, Math.PI / 2, sz, ty, ty === 5 ? 0.4 : 0.6, 0, aux, sc, 1);
-      renderer.glyphs.text(nm, Math.round(renderer.cols * 0.5 + (wx - cx)) - (nm.length >> 1), Math.round(renderer.rows * 0.5 - (wy - cy) / renderer.aspect) + 9, 0.6, 1.2, 1.0, 1);
+      if (!renderer.sil) renderer.glyphs.text(nm, Math.round(renderer.cols * 0.5 + (wx - cx)) - (nm.length >> 1), Math.round(renderer.rows * 0.5 - (wy - cy) / renderer.aspect) + 9, 0.6, 1.2, 1.0, 1);
     }
     return;
   }
@@ -602,7 +603,7 @@ function drawRoster(cx: number, cy: number, t: number): void {
     const d = ROSTER[i], wx = cx - 66 + (i % 4) * 44, wy = cy + (i < 4 ? 22 : -18);
     renderer.sprites.add(wx, wy, Math.PI / 2 + Math.sin(t * 0.5 + i) * 0.15, d.artSize, d.art, d.art === 0 ? 0.5 : d.art === 18 ? 0 : 0.6, 0, 0.9, 0.72, 1);
     const row = Math.round(renderer.rows * 0.5 - (wy - cy) / renderer.aspect) + 10;
-    renderer.glyphs.text(d.name, Math.round(renderer.cols * 0.5 + (wx - cx)) - (d.name.length >> 1), row, 0.6, 1.2, 1.0, 1);
+    if (!renderer.sil) renderer.glyphs.text(d.name, Math.round(renderer.cols * 0.5 + (wx - cx)) - (d.name.length >> 1), row, 0.6, 1.2, 1.0, 1);
   }
 }
 snapBase();

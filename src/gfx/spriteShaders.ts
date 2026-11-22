@@ -20,7 +20,7 @@ void main(){
 export const FS_SPRITE = `#version 300 es
 precision highp float; precision highp int;
 in vec2 vOff; flat in vec4 fB; flat in vec4 fT; flat in vec2 fRot;
-uniform float uTime;
+uniform float uTime; uniform float uSil;   // uSil: debug silhouette mode, every sprite flat white
 out vec4 o;
 ${NOISE}
 const vec2 LW = vec2(0.568, 0.5165);
@@ -130,8 +130,8 @@ float fMule(vec2 q, float thr, out float h, out float mt, out vec3 dp){
   for (int i = 0; i < 4; i++) {                                                     // four separate container slots per side: frames always, boxes = hold fill
     float cx = -7.5 + float(i) * 5.0;
     vec2 bq = q - vec2(cx, 6.2);
-    dFr = min(dFr, abs(sdBox(bq, vec2(2.1, 2.0))) - 0.4);
-    dSt = min(dSt, sdSeg(q, vec2(cx, 1.0), vec2(cx, 4.2)) - 0.3);
+    dFr = min(dFr, abs(sdBox(bq, vec2(2.1, 2.0))) - 0.7);
+    dSt = min(dSt, sdSeg(q, vec2(cx, 1.0), vec2(cx, 4.2)) - 0.5);
     if (float(i) + side < n) dCt = min(dCt, sdBox(bq, vec2(1.8, 1.7)) - 0.1);
   }
   float dT = min(length(q - vec2(-10.0, 0.0)) - 1.8, sdSeg(q, vec2(-10.0, 0.0), vec2(-13.5, 0.6)) - 0.4);
@@ -147,9 +147,9 @@ float fMule(vec2 q, float thr, out float h, out float mt, out vec3 dp){
 
 // ---- shade: flat chevron manta, very low glyph density, fades out while running dark (gS)
 float fShade(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  float dW = sdUneven(q, vec2(10.0, 0.5), vec2(-9.0, 12.5), 2.3, 0.6);              // outer blade
-  float dW2 = sdUneven(q, vec2(5.0, 0.4), vec2(-8.5, 6.0), 1.8, 0.5);                // inner blade, a gap between them
-  float dC = sdEll(q - vec2(1.0, 0.0), vec2(6.5, 2.4));                              // slim core
+  float dW = sdUneven(q, vec2(10.0, 0.5), vec2(-9.0, 12.5), 2.9, 0.8);              // outer blade
+  float dW2 = sdUneven(q, vec2(5.0, 0.4), vec2(-8.5, 6.0), 2.3, 0.7);                // inner blade, a gap between them
+  float dC = sdEll(q - vec2(1.0, 0.0), vec2(6.5, 3.0));                              // slim core
   float dSp = sdSeg(q, vec2(-9.0, 12.5), vec2(-12.0, 13.5)) - 0.25;
   float dH = min(min(dW, dW2), min(dC, dSp));
   float L = 0.8 + 4.0 * thr;
@@ -290,17 +290,19 @@ float fStation(vec2 p, float t, out float h, out float mt, out vec3 dp){
 
 // ---- dreadnought (boss): crimson capital ship with twin gun pods, ~46 units
 float fBoss(vec2 q, float thr, out float h, out float mt, out vec3 dp){
-  float dB = sdUneven(q, vec2(-19.0, 0.0), vec2(21.0, 0.0), 5.0, 1.4);               // keel
-  float dT = sdBox(q - vec2(-5.0, 0.0), vec2(5.5, 3.0)) - 0.6;                       // bridge tower
-  float dPr = min(sdUneven(q, vec2(-4.0, 3.0), vec2(14.0, 12.0), 2.2, 1.2), sdUneven(q, vec2(-6.0, 6.0), vec2(22.0, 17.0), 1.6, 0.9)); // trident: two swept prongs
-  float dBar = min(sdSeg(q, vec2(14.0, 12.0), vec2(26.0, 12.0)) - 0.75, sdSeg(q, vec2(9.0, 2.6), vec2(24.0, 2.6)) - 0.6);   // guns
+  // dreadnought: wedge-shaped imperial-style star destroyer (inspired by the classic capital-ship wedge): flat triangular hull, stepped bridge tower with shield globes, turret rows, engine bank.
+  float dB = sdTri(q, vec2(24.0, 0.0), vec2(-14.0, 14.5), vec2(-14.0, 0.0));
+  float dT = min(sdBox(q - vec2(-6.0, 0.0), vec2(7.0, 2.2)) - 0.4, min(sdBox(q - vec2(-11.0, 0.0), vec2(3.5, 4.4)) - 0.4, min(length(q - vec2(-12.5, 5.6)) - 1.5, 1e3)));   // stepped bridge tower with shield globes
+  float dPr = min(length(q - vec2(5.0, 5.5)) - 2.6, min(length(q - vec2(-3.0, 9.5)) - 2.4, length(q - vec2(-9.0, 5.0)) - 2.0));   // turret blisters
+  float dBar = min(sdSeg(q, vec2(10.0, 10.5), vec2(26.0, 10.5)) - 0.75, sdSeg(q, vec2(9.0, 2.6), vec2(23.0, 2.6)) - 0.6);         // cannons
+  float dW = sdBox(q - vec2(-17.0, 9.0), vec2(3.0, 4.5)) - 0.4;                                  // rear wing blocks
   float dE = sdBox(q - vec2(-23.0, 3.6), vec2(3.2, 3.2)) - 0.4;
   float dE2 = sdBox(q - vec2(-23.5, 0.0), vec2(2.8, 2.0)) - 0.3;
-  float dH = min(min(min(dB, dT), min(dPr, dBar)), min(dE, dE2));
+  float dH = min(min(min(dB, dT), min(dPr, dBar)), min(min(dW, dE), dE2));
   float L = 2.0 + 11.0 * thr;
   float dFl = min(sdUneven(q, vec2(-26.0, 3.6), vec2(-26.0 - L, 3.6), 2.2, 0.05), sdUneven(q, vec2(-26.0, 0.0), vec2(-26.0 - L * 0.8, 0.0), 1.8, 0.05));
-  h = max(max(bev(-dB, 5.0) * 1.0, bev(-dT, 2.2) * 1.5), max(max(bev(-dPr, 1.8) * 0.8, bev(-dBar, 0.7) * 0.9), bev(-min(dE, dE2), 1.2) * 0.9));
-  dp = vec3(dB, dPr, min(dE, dE2));
+  h = max(max(bev(-dB, 4.0) * 1.0, bev(-dT, 2.2) * 1.5), max(max(bev(-dPr, 1.6) * 1.2, bev(-dBar, 0.7) * 0.9), max(bev(-dW, 1.2) * 0.9, bev(-min(dE, dE2), 1.2) * 0.9)));
+  dp = vec3(dB, min(dPr, min(dW, dBar)), min(dE, dE2));
   mt = dFl < dH ? 1.0 : 0.0;
   return min(dH, dFl);
 }
@@ -441,7 +443,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     spec = 0.8;
   } else if (ty == 15) {               // anvil: bright gunmetal plating rows (heavy glyphs), hazard stripes, per-barrel muzzle flash
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(0.42, 0.62, 0.95) : (m == dp.y ? vec3(0.45, 0.45, 0.50) : vec3(0.58, 0.68, 0.85));   // steel-blue: orange/red is reserved for hostiles
+    col = m == dp.x ? vec3(0.66, 0.84, 1.2) : (m == dp.y ? vec3(0.78, 0.78, 0.86) : vec3(0.85, 0.95, 1.15));   // steel-blue: orange/red is reserved for hostiles
     col *= 1.0 - 0.35 * panel(q.x * 0.55, 0.07) - 0.25 * panel(q.y * 0.6 + 0.25, 0.07);
     col = mix(col, vec3(1.0, 0.85, 0.12), step(0.5, fract((q.x + q.y) * 0.5)) * smoothstep(0.6, 0.3, abs(q.y - 6.4)) * step(m, dp.z + 0.001));
     emis += smoothstep(0.6, 0.2, abs(q.x - 5.0)) * smoothstep(0.5, 0.2, abs(q.y - 2.2)) * vec3(1.6, 1.3, 0.2) * (0.5 + 0.5 * blink);
@@ -471,7 +473,7 @@ vec3 paint(int ty, vec2 q, vec2 p, vec3 dp, float h, float thr, float seed, out 
     spec = 0.35;
   } else if (ty == 18) {               // shade: near-black violet with faint edge light
     float m = min(dp.x, min(dp.y, dp.z));
-    col = m == dp.x ? vec3(1.0, 0.76, 1.5) : vec3(0.78, 0.54, 1.2);
+    col = m == dp.x ? vec3(1.35, 1.1, 1.7) : vec3(1.05, 0.85, 1.4);
     emis += smoothstep(0.5, 0.0, abs(dp.y + 0.3)) * vec3(1.0, 0.35, 1.2) * 0.8;
     emis += smoothstep(0.8, 0.0, length((q - vec2(-2.8, 1.2)) / vec2(0.7, 0.9))) * vec3(0.7, 0.4, 1.4) * (0.2 + thr);
     spec = 0.9;
@@ -657,7 +659,8 @@ void main(){
       float rim = pow(1.0 - n.z, 2.2);
       float ao = 0.55 + 0.45 * smoothstep(0.0, 0.35, h);
       float lit = fT.z;
-      col = (al * (0.42 + 0.75 * diff) * ao + sp * 0.8) * lit + rim * vec3(0.18, 0.32, 0.6) * 0.55 + emis;
+      float ef = mix(0.45, 1.0, smoothstep(0.0, 1.0, -d / (1.8 * px)));       // darker inner edge: a drawn outline, so silhouettes read at a glance
+      col = (al * (0.42 + 0.75 * diff) * ao + sp * 0.8) * lit * ef + rim * vec3(0.18, 0.32, 0.6) * 0.55 + emis;
     }
   } else if (ty == 4) {         // mine
     float r = length(p), a = atan(p.y, p.x);
@@ -712,6 +715,7 @@ void main(){
   }
   if (ty == 18) { cov *= 0.95 - 0.8 * seed; col *= 1.0 - 0.7 * seed; }       // shade: full hull normally, near-invisible running dark
   col += vec3(1.3) * flash;
+  if (uSil > 0.5) col = vec3(1.0);
   o = vec4(col * cov, cov);
 }`;
 
@@ -754,6 +758,7 @@ void main(){
       if (e < best) { best = e; bg = g; }
     }
   }
-  oA = vec4(avg * 1.7 + 0.08, float(bg) / 255.0);
+  vec3 cc = avg * 1.7 + 0.08; cc = mix(vec3(dot(cc, vec3(0.333))), cc, 1.45);   // a touch more saturation so hull colours stay distinct
+  oA = vec4(cc, float(bg) / 255.0);
   oB = vec4(avg * 0.5, smoothstep(0.3, 0.8, cov));
 }`;

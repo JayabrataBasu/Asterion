@@ -32,6 +32,8 @@ export class Renderer {
   /** Camera zoom: cell width is reduced by this many CSS px (main tweens the step with a CSS scale). */
   cols = 0; rows = 0; cwPx = 8; chPx = 16; aspect = 2; W = 0; H = 0; ox = 0; oy = 0; dpr = 1;
   drawCalls = 0; gpuMs = 0; hdr = false;
+  /** Debug: draw every sprite as a flat white silhouette (?sil=1). */
+  sil = false;
 
   private pScene!: WebGLProgram; private pGlow!: WebGLProgram; private pAscii!: WebGLProgram;
   private pSprite!: WebGLProgram; private pMatch!: WebGLProgram; private uSprite!: Loc; private uMatch!: Loc;
@@ -76,7 +78,7 @@ export class Renderer {
     this.uGlow = this.locs(this.pGlow, ['uRes', 'uCam', 'uAspect']);
     this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers', 'uQZ', 'uQN', 'uWorldCell']);
     this.uGlyph = this.locs(this.pGlyph, ['uCellPx', 'uOrigin', 'uCanvas', 'uScene', 'uAtlas', 'uBgK']);
-    this.uSprite = this.locs(this.pSprite, ['uRes', 'uCam', 'uAspect', 'uTime']);
+    this.uSprite = this.locs(this.pSprite, ['uRes', 'uCam', 'uAspect', 'uTime', 'uSil']);
     this.uMatch = this.locs(this.pMatch, ['uSpr', 'uSig', 'uCand', 'uNC', 'uFill']);
     this.uDown = this.locs(this.pDown, ['uSrc', 'uTexel', 'uPre', 'uThr', 'uKnee']);
     this.uUp = this.locs(this.pUp, ['uSrc', 'uTexel', 'uGain']);
@@ -285,7 +287,7 @@ export class Renderer {
       gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.useProgram(this.pSprite); gl.bindVertexArray(this.vaoSprite);
       gl.uniform2f(this.uSprite.uRes, this.cols, this.rows); gl.uniform2f(this.uSprite.uCam, f.camX, f.camY);
-      gl.uniform1f(this.uSprite.uAspect, this.aspect); gl.uniform1f(this.uSprite.uTime, f.time);
+      gl.uniform1f(this.uSprite.uAspect, this.aspect); gl.uniform1f(this.uSprite.uTime, f.time); gl.uniform1f(this.uSprite.uSil, this.sil ? 1 : 0);
       gl.bindBuffer(gl.ARRAY_BUFFER, this.spriteBuf);
       gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.sprites.data, 0, nSpr * SPRITE_STRIDE);
       gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, nSpr); this.drawCalls++;

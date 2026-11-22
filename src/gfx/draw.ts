@@ -2,6 +2,7 @@ import { TAU, hash2 } from '../core/util';
 import { settings } from '../core/config';
 import { BAND_NAME, DT, Kind, V_TOL, MAX_B, MAX_E, MAX_P, MAX_M, MAX_R, MAX_S, PK, Sim } from '../sim/sim';
 import { PLANET_STRIDE, designation, gravReach, sectorOf } from '../sim/world';
+import { hullShape } from '../sim/hulls';
 import { gi, glyphOfCode } from './atlas';
 import { Spr } from './batch';
 import type { Renderer } from './renderer';
@@ -68,6 +69,15 @@ export class FrameBuilder {
   private thrS = 0.25;
   /** Ships drawn this frame (x, y, heading, hull radius, allegiance, band dim) for quiet zones and nav lights. */
   private readonly lt = new Float32Array(16 * 6); private nl = 0;
+  /** Extra quiet-zone circles at a hull's outermost parts (wing tips, hammerhead ends, claws), so the dark patch follows the silhouette. */
+  private hullZones(x: number, y: number, a: number, art: number): void {
+    const sh = hullShape(art), ca = Math.cos(a), sa = Math.sin(a);
+    let n = 0;
+    for (let c = 0; c < sh.c.length && n < 6; c += 3) {
+      if (Math.hypot(sh.c[c], sh.c[c + 1]) < sh.reach * 0.55) continue;
+      this.r.quiet(this.cx(x + sh.c[c] * ca - sh.c[c + 1] * sa), this.cy(y + sh.c[c] * sa + sh.c[c + 1] * ca), sh.c[c + 2] * 2.2, 0); n++;
+    }
+  }
   /** Register a ship for the quiet zone and always-on lights. al: 0 player, 1 hostile, 2 neutral. */
   private ship(x: number, y: number, a: number, size: number, scale: number, al: number): void {
     const R = size * scale * 0.5;
@@ -255,7 +265,7 @@ export class FrameBuilder {
       this.thrS += (target - this.thrS) * 0.22;
       const S = s.ship, rk = S.radius / 2.4 * SK;
       sp.add(x, y, a, SK * S.artSize, S.art, this.hullState() + 2 * ((s.up[6] > 0 ? 1 : 0) | (s.up[8] >= 2 ? 2 : 0) | (s.up[1] >= 3 ? 4 : 0)), s.hitFlash * 0.8, this.thrS, 0.8, this.shade(x, y) * (S.darkSig < 1 ? 1 - 0.6 * this.dark : 1));
-      if (S.darkSig >= 1 || this.dark < 0.5) { gl.add(x, y, 9, 0.16, 0.18, 0.24); this.ship(x, y, a, SK * S.artSize, 0.8, 0); }
+      if (S.darkSig >= 1 || this.dark < 0.5) { gl.add(x, y, 9, 0.16, 0.18, 0.24); this.ship(x, y, a, SK * S.artSize, 0.8, 0); this.hullZones(x, y, a, S.art); }
       if (s.thrusting) {
         const ca = Math.cos(a), sa = Math.sin(a);
         const rad = (s.boosting ? 8 : 5.5) * (S.darkSig < 1 ? 0.6 : 1);
@@ -296,6 +306,7 @@ export class FrameBuilder {
 
   // ------------------------------------------------------------------ readability marks: bolts, dark halos, nose + tail on every ship
   private marks(time: number): void {
+    if (this.r.sil) return;
     const s = this.sim, b = this.r.glyphs, back = DT * (1 - this.alpha), cb = settings.cb;
     // heading: bright nose glyph + flickering tail on every ship
     const flick = (time * 14) & 1;

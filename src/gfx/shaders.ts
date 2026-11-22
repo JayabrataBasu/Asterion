@@ -486,7 +486,7 @@ void main(){
   vec4 ma = texelFetch(uMA, cell, 0);
   vec3 fg, bg;
   int g;
-  float qa = 1.0, qal = 0.0;                          // quiet zone: 0 right at a ship, 1 beyond ~3 cells; graded in between
+  float qa = 1.0, qal = 0.0, qw = 1.0;                          // quiet zone: 0 right at a ship, 1 beyond ~3 cells; graded in between
   { vec2 cc = vec2(cell) + 0.5;
     for (int i = 0; i < 16; i++) {
       if (i >= uQN) break;
@@ -494,15 +494,16 @@ void main(){
       float d = length((cc - z.xy) * vec2(1.0, 2.0)) - z.z * 0.7;
       float a = clamp(d / (3.0 + 0.25 * z.z), 0.0, 1.0); a = a * a * (3.0 - 2.0 * a);
       if (a < qa) { qa = a; qal = z.w; }
+      qw = min(qw, clamp(d / (15.0 + 0.3 * z.z), 0.0, 1.0));     // wider reach, used only to tame glare
     }
     qa = mix(0.35, 1.0, qa); }   // never fully black: the sky stays visible around a ship, just calmer
   if (ma.a > 0.0) {                                   // sprite cell: shape-matched glyph
     vec4 mb = texelFetch(uMB, cell, 0);
     g = int(ma.a * 255.0 + 0.5);
     fg = ma.rgb;
-    if (qa < 1.0) { float ll = dot(fg, vec3(0.2126, 0.7152, 0.0722)); fg *= clamp(1.1 / max(ll, 0.02), 1.0, 5.0); }   // adaptive contrast: a ship cell never goes darker than a floor
+    if (qa < 1.0) { float ll = dot(fg, vec3(0.2126, 0.7152, 0.0722)); fg *= clamp(1.4 / max(ll, 0.02), 1.0, 6.0); fg *= 1.25; }   // brighter glyph ink on a darker tile: same overall brightness, much crisper features   // adaptive contrast: a ship cell never goes darker than a floor
     bg = mix(s.rgb * uBgK * (s.a > 0.0 ? 0.04 : 1.0) * qa, mb.rgb, mb.a);
-    if (qa < 1.0) bg = max(bg, fg * 0.4 * mb.a);     // hull tile never sinks into the dark zone
+    if (qa < 1.0) bg = max(bg, fg * 0.35 * mb.a);     // hull tile never sinks into the dark zone
   } else {
     float lum = dot(s.rgb, vec3(0.2126, 0.7152, 0.0722));
     float l = 1.0 - exp(-lum * uExposure);
@@ -537,7 +538,9 @@ void main(){
     h += texelFetch(uMA, clamp(cell + ivec2(-1, 1), ivec2(0), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;
     h += texelFetch(uMA, clamp(cell + ivec2(1, -1), ivec2(0), uCells - 1), 0).a > 0.0 ? 0.5 : 0.0;
     h += texelFetch(uMA, max(cell - ivec2(1, 1), ivec2(0)), 0).a > 0.0 ? 0.5 : 0.0;
-    float dim = (1.0 - 0.9 * min(1.0, h)) * qa;      // dark ring + graded quiet zone: ships always sit in darkness
+    float slum = dot(s.rgb, vec3(0.2126, 0.7152, 0.0722));
+    float glare = 1.0 / (1.0 + 16.0 * max(0.0, slum - 0.25) * (1.0 - qw) * (1.0 - qw));   // very bright backdrop (the sun) is pulled down near a ship so glare never swallows it
+    float dim = (1.0 - 0.9 * min(1.0, h)) * qa * glare;      // dark ring + graded quiet zone: ships always sit in darkness
     bg *= dim; fg *= dim;
   }
   if (uReveal.z > 0.0) {                              // typed arrival: the scene writes itself in outward from the centre
@@ -554,7 +557,7 @@ void main(){
     fg = t * max(0.25, dot(fg, vec3(0.333))); bg = t * 0.03;
   }
   float cov = g == 0 ? 0.0 : glyphCov(g, loc);
-  o = vec4(mix(bg, fg, cov), 1.0);
+  o = vec4(mix(bg, fg, cov), ma.a > 0.0 ? 0.0 : 1.0);   // alpha 0 marks a sprite cell: bloom, grain, scanlines and colour fringing back off there so ships stay crisp
 }`;
 
 /** Entities / particles / HUD: instanced glyph quads. */
@@ -589,7 +592,8 @@ export const FS_BLOOM_DOWN = `#version 300 es
 precision highp float; precision highp int;
 uniform sampler2D uSrc; uniform vec2 uTexel; uniform float uPre; uniform float uThr, uKnee;
 in vec2 vUv; out vec4 o;
-vec3 pre(vec3 c){
+vec3 pre(vec4 t){
+  vec3 c = t.rgb * mix(0.12, 1.0, t.a);          // sprite cells (alpha 0) feed far less bloom
   if (uPre < 0.5) return c;
   float l = max(c.r, max(c.g, c.b));
   float soft = clamp(l - uThr + uKnee, 0.0, 2.0 * uKnee);
@@ -597,11 +601,11 @@ vec3 pre(vec3 c){
   return c * (max(soft, l - uThr) / max(l, 1e-4));
 }
 void main(){
-  vec3 s = pre(texture(uSrc, vUv).rgb) * 4.0;
-  s += pre(texture(uSrc, vUv + uTexel * vec2(-1.0, -1.0)).rgb);
-  s += pre(texture(uSrc, vUv + uTexel * vec2( 1.0, -1.0)).rgb);
-  s += pre(texture(uSrc, vUv + uTexel * vec2(-1.0,  1.0)).rgb);
-  s += pre(texture(uSrc, vUv + uTexel * vec2( 1.0,  1.0)).rgb);
+  vec3 s = pre(texture(uSrc, vUv)) * 4.0;
+  s += pre(texture(uSrc, vUv + uTexel * vec2(-1.0, -1.0)));
+  s += pre(texture(uSrc, vUv + uTexel * vec2( 1.0, -1.0)));
+  s += pre(texture(uSrc, vUv + uTexel * vec2(-1.0,  1.0)));
+  s += pre(texture(uSrc, vUv + uTexel * vec2( 1.0,  1.0)));
   o = vec4(s / 8.0, 1.0);
 }`;
 export const FS_BLOOM_UP = `#version 300 es
@@ -636,20 +640,21 @@ void main(){
   if (uCurve > 0.0) { uv = c * (1.0 + uCurve * dot(c, c) * 2.2) + 0.5; }
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) { o = vec4(0.0, 0.0, 0.0, 1.0); return; }
   vec2 cc = uv - 0.5;
-  vec2 off = cc * dot(cc, cc) * uChroma;
+  float sm = 1.0 - texture(uScene, uv).a;               // 1 on ship / structure cells: keep them crisp
+  vec2 off = cc * dot(cc, cc) * uChroma * (1.0 - sm);
   vec3 col;
   col.r = texture(uScene, uv + off).r;
   col.g = texture(uScene, uv).g;
   col.b = texture(uScene, uv - off).b;
-  col += texture(uBloom, uv).rgb * uBloomK;
+  col += texture(uBloom, uv).rgb * uBloomK * (1.0 - 0.7 * sm);
   float row = gl_FragCoord.y;
-  col *= 1.0 - uScan * (0.5 + 0.5 * sin(row * 3.14159265));
+  col *= 1.0 - uScan * (0.5 + 0.5 * sin(row * 3.14159265)) * (1.0 - 0.85 * sm);
   float vig = 1.0 - uVig * smoothstep(0.25, 0.95, length(cc) * 1.35);
   col *= vig;
   col += vec3(1.0, 0.95, 0.85) * uFlash * 0.35;
   col = mix(col, col * vec3(1.4, 0.55, 0.55) + vec3(0.12, 0.0, 0.0), uHit * smoothstep(0.1, 0.8, length(cc) * 1.4) * 0.7);
   col = 1.0 - exp(-col * 1.25);                       // soft filmic shoulder
   col = pow(col, vec3(0.93));
-  col += (h12(gl_FragCoord.xy + fract(uTime) * 91.0) - 0.5) * uGrain;
+  col += (h12(gl_FragCoord.xy + fract(uTime) * 91.0) - 0.5) * uGrain * (1.0 - 0.8 * sm);
   o = vec4(col, 1.0);
 }`;
