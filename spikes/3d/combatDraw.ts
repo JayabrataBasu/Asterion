@@ -3,7 +3,7 @@
  *  entry is only known on the chip (see combatShaders.ts); the counts are put together here from what it answers.
  *  All arrays are made once; `build` allocates nothing. */
 import type { Capacity, Swarm } from './combat';
-import { beyondHorizon, inView } from './cull';
+import { beyondHorizon } from './cull';
 import { type Quat, type Vec3, v3 } from './math';
 import type { Planet } from './planet';
 
@@ -73,6 +73,7 @@ export class SwarmList {
   private readonly flags: Uint8Array;
   private grid = new Int32Array(0);
   private cols = 0; private rows = 0; private tanX = 0; private tanY = 0;
+  private kx = 1; private ky = 1; // what makes the distance to a side plane of the view a true one
   private nShips = 0; private nBolts = 0; private nParts = 0;
   // glyph indices
   private readonly open: number; private readonly shut: number; private readonly mark: number;
@@ -115,6 +116,7 @@ export class SwarmList {
   private setView(v: SwarmView): void {
     if (v.cols !== this.cols || v.rows !== this.rows) this.grid = new Int32Array(v.cols * v.rows); // after a resize
     this.cols = v.cols; this.rows = v.rows; this.tanY = v.tanY; this.tanX = v.tanY * v.cols / (v.rows * 2);
+    this.kx = 1 / Math.sqrt(1 + this.tanX * this.tanX); this.ky = 1 / Math.sqrt(1 + this.tanY * this.tanY);
     this.cam = v.camPos;
     const { x, y, z, w } = v.camQ, m = this.m;
     m[0] = 1 - 2 * (y * y + z * z); m[1] = 2 * (x * y + w * z); m[2] = 2 * (x * z - w * y);
@@ -136,6 +138,14 @@ export class SwarmList {
     out.z = m[6] * x + m[7] * y + m[8] * z;
   }
 
+  /** cull.ts inView for a ship, without Math.hypot, inside which the browser allocates. */
+  private shipInView(p: Vec3): boolean {
+    const r = SHIP_RADIUS, { tanX, tanY, kx, ky } = this;
+    if (-p.z + r < NEAR) return false;
+    if ((p.x + tanX * p.z) * kx > r || (-p.x + tanX * p.z) * kx > r) return false;
+    return !((p.y + tanY * p.z) * ky > r || (-p.y + tanY * p.z) * ky > r);
+  }
+
   /** Continuous cell coordinates of a view-space point in front of the camera. */
   private col(p: Vec3): number { return (p.x / (-p.z * this.tanX) * 0.5 + 0.5) * this.cols; }
   private row(p: Vec3): number { return (p.y / (-p.z * this.tanY) * 0.5 + 0.5) * this.rows; }
@@ -148,13 +158,13 @@ export class SwarmList {
   }
 
   private ships(swarm: Swarm, planet: Planet | null): void {
-    const { view, rel } = this, aspect = this.tanX / this.tanY;
+    const { view, rel } = this;
     for (let i = 0; i < swarm.ships; i++) {
       this.toView(view, swarm.shipPos, i);
       const depth = -view.z;
-      const seen = inView(view, SHIP_RADIUS, this.tanY, aspect, NEAR);
+      const seen = this.shipInView(view);
       // a ship out of view is counted by what its distance would make it
-      const far = isMarker(seen ? depth : Math.hypot(view.x, view.y, view.z), this.rows, this.tanY);
+      const far = isMarker(seen ? depth : Math.sqrt(view.x * view.x + view.y * view.y + view.z * view.z), this.rows, this.tanY);
       this.shipIsMarker[i] = far ? 1 : 0;
       this.shipState[i] = OFF;
       if (!seen) continue;

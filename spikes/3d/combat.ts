@@ -100,6 +100,9 @@ function hash(a: number, b: number, c: number): number {
   return (h >>> 0) / 4294967296;
 }
 
+/** Not Math.hypot: the browser allocates inside it, and this runs for every ship, bolt and particle of every frame. */
+const length = (x: number, y: number, z: number): number => Math.sqrt(x * x + y * y + z * z);
+
 const smooth = (a: number, b: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -176,17 +179,17 @@ export class CombatField {
     qRotate(f, q, AXIS_F);
     qRotate(up, q, AXIS_U);
     let rx = p.x - c.x, ry = p.y - c.y, rz = p.z - c.z;
-    const rl = Math.hypot(rx, ry, rz) || 1;
+    const rl = length(rx, ry, rz) || 1;
     rx /= rl; ry /= rl; rz /= rl;
     const k = smooth(0.7, 0.95, Math.abs(rx * f.x + ry * f.y + rz * f.z));
     let hx = rx + (up.x - rx) * k, hy = ry + (up.y - ry) * k, hz = rz + (up.z - rz) * k;
     let d = hx * f.x + hy * f.y + hz * f.z;
     hx -= f.x * d; hy -= f.y * d; hz -= f.z * d;
-    let l = Math.hypot(hx, hy, hz);
+    let l = length(hx, hy, hz);
     if (l < 0.05) {
       d = up.x * f.x + up.y * f.y + up.z * f.z;
       hx = up.x - f.x * d; hy = up.y - f.y * d; hz = up.z - f.z * d;
-      l = Math.hypot(hx, hy, hz) || 1;
+      l = length(hx, hy, hz) || 1;
     }
     u.x = hx / l; u.y = hy / l; u.z = hz / l;
     r.x = f.y * u.z - f.z * u.y; r.y = f.z * u.x - f.x * u.z; r.z = f.x * u.y - f.y * u.x;
@@ -209,7 +212,7 @@ export class CombatField {
   /** Raises `p` to `clear` over the ground if it is lower: the deeper, the higher it comes out, up to 60 more. */
   private lift(clear: number): void {
     const { p, dir, planet } = this, c = planet.center;
-    const x = p.x - c.x, y = p.y - c.y, z = p.z - c.z, d = Math.hypot(x, y, z);
+    const x = p.x - c.x, y = p.y - c.y, z = p.z - c.z, d = length(x, y, z);
     if (d > planet.radius + planet.relief + clear) return;
     dir.x = x / d; dir.y = y / d; dir.z = z / d;
     const ground = surfaceRadius(planet, dir), alt = d - ground;
@@ -232,18 +235,18 @@ export class CombatField {
   /** As clampRange, but moving along the ground (square to the player's vertical), which keeps the height. */
   private slideIntoRange(): void {
     const { p, f } = this, o = this.player, c = this.planet.center;
-    const x = p.x - o.x, y = p.y - o.y, z = p.z - o.z, d = Math.hypot(x, y, z);
+    const x = p.x - o.x, y = p.y - o.y, z = p.z - o.z, d = length(x, y, z);
     if (d >= NEAR_RANGE && d <= FAR_RANGE) return;
     const to = d < NEAR_RANGE ? NEAR_RANGE : FAR_RANGE;
     let ux = o.x - c.x, uy = o.y - c.y, uz = o.z - c.z;
-    const ul = Math.hypot(ux, uy, uz) || 1;
+    const ul = length(ux, uy, uz) || 1;
     ux /= ul; uy /= ul; uz /= ul;
     const v = x * ux + y * uy + z * uz;
     if (Math.abs(v) >= to) { this.clampRange(); return; }
-    let tx = x - ux * v, ty = y - uy * v, tz = z - uz * v, tl = Math.hypot(tx, ty, tz);
+    let tx = x - ux * v, ty = y - uy * v, tz = z - uz * v, tl = length(tx, ty, tz);
     if (tl < 1e-3) { // straight above or below: go ahead
       const a = f.x * ux + f.y * uy + f.z * uz;
-      tx = f.x - ux * a; ty = f.y - uy * a; tz = f.z - uz * a; tl = Math.hypot(tx, ty, tz) || 1;
+      tx = f.x - ux * a; ty = f.y - uy * a; tz = f.z - uz * a; tl = length(tx, ty, tz) || 1;
     }
     const k = Math.sqrt(to * to - v * v) / tl;
     p.x = o.x + ux * v + tx * k; p.y = o.y + uy * v + ty * k; p.z = o.z + uz * v + tz * k;
@@ -281,12 +284,12 @@ export class CombatField {
   /** The ship's axes from its velocity, with its up as near the frame's as that allows. */
   private orient(i: number): void {
     const { vel, u, f } = this, rot = this.swarm.shipRot;
-    let l = Math.hypot(vel.x, vel.y, vel.z);
+    let l = length(vel.x, vel.y, vel.z);
     const bx = l > 1e-6 ? -vel.x / l : -f.x, by = l > 1e-6 ? -vel.y / l : -f.y, bz = l > 1e-6 ? -vel.z / l : -f.z;
     let hx = u.x, hy = u.y, hz = u.z;
     if (Math.abs(bx * hx + by * hy + bz * hz) > 0.98) { hx = f.x; hy = f.y; hz = f.z; }
     let rx = hy * bz - hz * by, ry = hz * bx - hx * bz, rz = hx * by - hy * bx;
-    l = Math.hypot(rx, ry, rz) || 1;
+    l = length(rx, ry, rz) || 1;
     rx /= l; ry /= l; rz /= l;
     const o = i * 9;
     rot[o] = rx; rot[o + 1] = ry; rot[o + 2] = rz;
@@ -312,7 +315,7 @@ export class CombatField {
         tx = p.x; ty = p.y; tz = p.z;
       }
       let dx = tx - ox, dy = ty - oy, dz = tz - oz;
-      const l = Math.hypot(dx, dy, dz) || 1;
+      const l = length(dx, dy, dz) || 1;
       dx /= l; dy /= l; dz /= l;
       p.x = ox + dx * l * age; p.y = oy + dy * l * age; p.z = oz + dz * l * age;
       this.clampRange();
