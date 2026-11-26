@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SHIP_R } from './flight';
 import { type Vec3, addScaled, cross, dot, len, norm, qRotate, sub, v3 } from './math';
-import { changeRate, flickerRate, percentile } from './metrics';
+import { FlickerTally, changeRate, flickerRate, percentile } from './metrics';
 import { PATH_SECONDS, type PathPose, pathFocus, pose } from './path';
 import { altitude, height, makePlanet } from './planet';
 
@@ -156,5 +156,34 @@ describe('the scripted path', () => {
     expect(len(d)).toBeCloseTo(1, 9);
     expect(pathFocus(makePlanet(1))).toEqual(d);
     expect(dot(d, radialUp(at(30)))).toBeCloseTo(1, 6);
+  });
+});
+
+describe('FlickerTally', () => {
+  const feed = (t: FlickerTally, ...frames: number[][]): void => { for (const f of frames) { t.next().set(f); t.add(); } };
+  it('takes one change sample per pair and one flicker sample per three consecutive frames', () => {
+    const t = new FlickerTally(4);
+    feed(t, [1, 1, 1, 1]);
+    expect([t.change, t.flicker]).toEqual([[], []]);
+    feed(t, [2, 1, 2, 1]);
+    expect([t.change, t.flicker]).toEqual([[0.5], []]);
+    feed(t, [1, 1, 3, 1]);
+    expect([t.change, t.flicker]).toEqual([[0.5, 0.5], [0.25]]);
+    // the ring turns over: later samples still use the three newest frames in order
+    feed(t, [2, 1, 3, 1], [1, 1, 3, 1], [1, 1, 3, 1]);
+    expect(t.change).toEqual([0.5, 0.5, 0.25, 0.25, 0]);
+    expect(t.flicker).toEqual([0.25, 0.25, 0.25, 0]);
+  });
+  it('sums up as mean and 95th percentile', () => {
+    const t = new FlickerTally(4);
+    feed(t, [1, 1, 1, 1], [2, 1, 2, 1], [1, 1, 3, 1], [1, 1, 3, 1]);
+    const s = t.summary();
+    expect(s.flickerMean).toBeCloseTo(0.125, 12);
+    expect(s.flickerP95).toBe(0.25);
+    expect(s.changeMean).toBeCloseTo(1 / 3, 12);
+    expect(s.changeP95).toBe(0.5);
+  });
+  it('is all zero without samples', () => {
+    expect(new FlickerTally(4).summary()).toEqual({ flickerMean: 0, flickerP95: 0, changeMean: 0, changeP95: 0 });
   });
 });

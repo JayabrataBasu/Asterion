@@ -3,8 +3,10 @@
  *
  *  Altitudes are above surfaceRadius, averaged along the track over RELIEF_WINDOW seconds either side: following
  *  every bump exactly would bob the camera, and the flicker measure would then count the bobbing. */
+import { CHASE } from './camera';
 import {
-  type Quat, type Vec3, add, addScaled, cross, dot, norm, qAxisAngle, qIdentity, qMul, qNorm, qRotate, scale, v3,
+  type Quat, type Vec3, add, addScaled, cross, dot, norm, qAxisAngle, qFromBasis, qIdentity, qMul, qNorm, qRotate, scale,
+  v3,
 } from './math';
 import { type Planet, height, surfaceRadius } from './planet';
 import { SUN } from './shaders';
@@ -22,7 +24,6 @@ const DIVE = 50;                  // sink rate entering the atmosphere, units a 
 const TURN_RATE = 0.35, TURN_S = 7.5, BANK = 35 * Math.PI / 180; // low phase: right, left, right, left
 const RELIEF_WINDOW = 1.5, RELIEF_SAMPLES = 12;
 const DEG = Math.PI / 180;
-const CHASE = v3(0, 10, 40);      // camera in the ship's frame: up and back
 
 const L = norm(v3(), v3(...SUN));
 const smooth = (t: number): number => t * t * (3 - 2 * t);
@@ -200,24 +201,4 @@ export function pose(t: number, p: Planet): PathPose {
 
   const camPos = add(v3(), shipPos, qRotate(v3(), shipQ, CHASE));
   return { camPos, camQ: { ...shipQ }, shipPos, shipQ, phase: PHASES[phase] };
-}
-
-/** Quaternion of the rotation whose matrix columns are the given unit axes. */
-function qFromBasis(r: Vec3, u: Vec3, b: Vec3): Quat {
-  const tr = r.x + u.y + b.z;
-  let x: number, y: number, z: number, w: number;
-  if (tr > 0) {
-    const s = Math.sqrt(tr + 1) * 2;
-    w = s / 4; x = (u.z - b.y) / s; y = (b.x - r.z) / s; z = (r.y - u.x) / s;
-  } else if (r.x > u.y && r.x > b.z) {
-    const s = Math.sqrt(1 + r.x - u.y - b.z) * 2;
-    w = (u.z - b.y) / s; x = s / 4; y = (u.x + r.y) / s; z = (b.x + r.z) / s;
-  } else if (u.y > b.z) {
-    const s = Math.sqrt(1 + u.y - r.x - b.z) * 2;
-    w = (b.x - r.z) / s; x = (u.x + r.y) / s; y = s / 4; z = (b.y + u.z) / s;
-  } else {
-    const s = Math.sqrt(1 + b.z - r.x - u.y) * 2;
-    w = (r.y - u.x) / s; x = (b.x + r.z) / s; y = (b.y + u.z) / s; z = s / 4;
-  }
-  return qNorm({ x, y, z, w }, { x, y, z, w });
 }

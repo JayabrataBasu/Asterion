@@ -48,6 +48,25 @@ export function qRotate(o: Vec3, q: Quat, v: Vec3): Vec3 {
     v.y + q.w * ty + q.z * tx - q.x * tz,
     v.z + q.w * tz + q.x * ty - q.y * tx);
 }
+/** Quaternion of the rotation whose matrix columns are the given unit axes. */
+export function qFromBasis(r: Vec3, u: Vec3, b: Vec3): Quat {
+  const tr = r.x + u.y + b.z;
+  let x: number, y: number, z: number, w: number;
+  if (tr > 0) {
+    const s = Math.sqrt(tr + 1) * 2;
+    w = s / 4; x = (u.z - b.y) / s; y = (b.x - r.z) / s; z = (r.y - u.x) / s;
+  } else if (r.x > u.y && r.x > b.z) {
+    const s = Math.sqrt(1 + r.x - u.y - b.z) * 2;
+    w = (u.z - b.y) / s; x = s / 4; y = (u.x + r.y) / s; z = (b.x + r.z) / s;
+  } else if (u.y > b.z) {
+    const s = Math.sqrt(1 + u.y - r.x - b.z) * 2;
+    w = (b.x - r.z) / s; x = (u.x + r.y) / s; y = s / 4; z = (b.y + u.z) / s;
+  } else {
+    const s = Math.sqrt(1 + b.z - r.x - u.y) * 2;
+    w = (r.y - u.x) / s; x = (b.x + r.z) / s; y = (b.y + u.z) / s; z = s / 4;
+  }
+  return qNorm({ x, y, z, w }, { x, y, z, w });
+}
 /** Shortest-way interpolation between unit quaternions. */
 export function qSlerp(o: Quat, a: Quat, b: Quat, t: number): Quat {
   let c = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;

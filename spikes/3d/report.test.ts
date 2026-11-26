@@ -1,0 +1,120 @@
+import { describe, expect, it } from 'vitest';
+import { DT } from '../../src/sim/sim';
+import { PathRun, type PathStep, type ReportWindow, formatFlicker, formatPerf, reportWindows } from './report';
+
+const info = {
+  browser: 'TestBrowser/1.0', gpu: 'Test GPU', W: 1920, H: 1080, cssW: 1920, cssH: 1080, dpr: 1, cols: 240, rows: 67,
+  scale: 'radiusK 150', tiles: 'tiles built by workers', notes: [] as string[],
+};
+
+describe('reportWindows', () => {
+  it('is the four whole 15 s phases by default', () => {
+    expect(reportWindows(null, 2)).toEqual([
+      { phase: 'approach', start: 0, frames: 900, mode: 2 }, { phase: 'descent', start: 15, frames: 900, mode: 2 },
+      { phase: 'low', start: 30, frames: 900, mode: 2 }, { phase: 'climb', start: 45, frames: 900, mode: 2 },
+    ]);
+  });
+  it('takes the first secs seconds of each phase', () => {
+    const w = reportWindows('2', 1);
+    expect(w.map(x => [x.start, x.frames, x.mode])).toEqual([[0, 120, 1], [15, 120, 1], [30, 120, 1], [45, 120, 1]]);
+  });
+  it('keeps secs within a phase and long enough for one flicker sample', () => {
+    expect(reportWindows('99', 0)[0].frames).toBe(900);
+    expect(reportWindows('0.001', 0)[0].frames).toBe(3);
+    for (const bad of ['0', '-3', 'abc', '']) expect(reportWindows(bad, 0)[0].frames).toBe(900);
+  });
+});
+
+/** Runs a PathRun, `settled` saying whether the render of the step before it was settled. */
+function drive(run: PathRun, settled: (i: number) => boolean = () => true): PathStep[] {
+  const out: PathStep[] = [];
+  for (let i = 0; i < 100000; i++) {
+    const s = run.step(i > 0 && settled(i));
+    if (!s) return out;
+    out.push(s);
+  }
+  throw new Error('never ends');
+}
+const W = (start: number, frames: number, mode: 0 | 1 | 2 = 2): ReportWindow => ({ phase: 'low', start, frames, mode });
+
+describe('PathRun', () => {
+  it('settles and leads in one step before the window, then advances exactly 1/60 s a frame', () => {
+    const steps = drive(new PathRun([W(30, 4)], true));
+    expect(steps.map(s => s.frame)).toEqual([-1, -1, 0, 1, 2, 3]);
+    expect(steps.map(s => s.fresh)).toEqual([true, false, false, false, false, false]);
+    expect(steps.slice(0, 2).map(s => s.t)).toEqual([30 - DT, 30 - DT]);
+    expect(steps.slice(2).map(s => s.t)).toEqual([0, 1, 2, 3].map(i => 30 + i * DT));
+    expect(steps.every(s => s.window === 0)).toBe(true);
+  });
+  it('waits for the tiles, then takes one more unmeasured step', () => {
+    const run = new PathRun([W(30, 3)], true);
+    const steps = drive(run, i => i >= 5);
+    expect(steps.map(s => s.frame)).toEqual([-1, -1, -1, -1, -1, -1, 0, 1, 2]);
+    expect(run.unsettled).toBe(0);
+  });
+  it('does not take the settled state of the previous window for the new one', () => {
+    const steps = drive(new PathRun([W(0, 3), W(15, 3)], true));
+    expect(steps.filter(s => s.window === 1).map(s => s.frame)).toEqual([-1, -1, 0, 1, 2]);
+  });
+  it('gives up waiting after the limit and says so', () => {
+    const run = new PathRun([W(30, 3)], true, 10);
+    const steps = drive(run, () => false);
+    expect(steps.filter(s => s.frame >= 0).length).toBe(3);
+    expect(steps.length).toBeLessThan(20);
+    expect(run.unsettled).toBe(1);
+  });
+  it('can run windows that follow on without a break, settling only at jumps', () => {
+    const steps = drive(new PathRun([W(0, 900), W(15, 900), W(30, 3), W(45, 3)], false));
+    expect(steps.filter(s => s.fresh).map(s => s.window)).toEqual([0, 3]);
+    const measured = steps.filter(s => s.frame >= 0);
+    expect(measured.length).toBe(1806);
+    expect(measured[900].t - measured[899].t).toBeCloseTo(DT, 12);
+  });
+  it('starts afresh for every window when asked, also for the same window in another mode', () => {
+    const steps = drive(new PathRun([W(0, 900, 0), W(15, 900, 0), W(15, 900, 1)], true));
+    expect(steps.filter(s => s.fresh).map(s => s.window)).toEqual([0, 1, 2]);
+  });
+});
+
+describe('formatPerf', () => {
+  const spread = (p50: number, p95: number, max: number) => ({ p50, p95, max });
+  const data = {
+    stab: 2, windows: reportWindows(null, 2), frames: 3600, slowFrames: 3,
+    frame: spread(16.7, 16.9, 41.2), processor: spread(1.1, 2.2, 9.9), pose: spread(0.1, 0.2, 0.9),
+    sim: { p95: 0.1, mean: 0.0031 }, timerStep: 0.1,
+    gpu: spread(5.5, 7.5, 12), gpuSamples: 3590, hasTimer: true,
+    tilesPeak: 91, trisPeak: 61234, pendingPeak: 40, buildMean: 0.93, buildMax: 6.4, builds: 4100,
+  };
+  it('gives every figure asked for', () => {
+    const text = formatPerf({ ...info, notes: ['restarted once'] }, data);
+    for (const part of [
+      'TestBrowser/1.0', 'Test GPU', '1920x1080', '240x67', 'full 15 s phases', '3600 frames',
+      'p50 16.70', 'p95 16.90', 'worst 41.20', '3 over 25 ms', 'p95 2.20', 'p95 0.10', 'mean 0.0031', '5.50', '7.50',
+      'tiles 91', 'triangles 61234', 'mean 0.93', 'worst 6.40', 'radiusK 150', 'restarted once', 'timer step 0.100 ms',
+    ]) expect(text).toContain(part);
+  });
+  it('says when graphics time is not available', () => {
+    const text = formatPerf(info, { ...data, hasTimer: false, gpuSamples: 0 });
+    expect(text).toContain('graphics ms      n/a');
+    expect(text).not.toContain('7.50');
+  });
+  it('names a shortened run', () => {
+    expect(formatPerf(info, { ...data, windows: reportWindows('2', 2) })).toContain('first 2 s of each phase');
+  });
+});
+
+describe('formatFlicker', () => {
+  const rows = [0, 1, 2].flatMap(mode => (['approach', 'descent', 'low', 'climb'] as const).map(phase => ({
+    phase, mode: mode as 0 | 1 | 2, frames: 900, flickerMean: 0.001 * (mode + 1), flickerP95: 0.00448, changeMean: 0.03133, changeP95: 0.05174,
+  })));
+  it('is a table of percentages, one row per phase and mode, by phase', () => {
+    const text = formatFlicker(info, rows);
+    const table = text.split('\n').filter(l => /^(approach|descent|low|climb) /.test(l));
+    expect(table.length).toBe(12);
+    expect(table.map(l => l.split(/\s+/).slice(0, 2).join(' ')).slice(0, 4)).toEqual(['approach 0', 'approach 1', 'approach 2', 'descent 0']);
+    expect(table[2].split(/\s+/)).toEqual(['approach', '2', '900', '0.300', '0.448', '3.133', '5.174']);
+    expect(text).toContain('240x67');
+    expect(text).toContain('TestBrowser/1.0');
+    expect(text).toContain('full 15 s phases');
+  });
+});

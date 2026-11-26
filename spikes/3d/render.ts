@@ -13,7 +13,7 @@ import * as S from './shaders';
 import {
   TILE_N, type TileId, type TileMesh, buildTile, faceDir, resolveDrawList, selectTiles, tileIndices, tileKey,
 } from './tiles';
-import { FrameTimer, type QueryApi } from './timing';
+import { FrameTimer, type QueryApi, shownGpuMs } from './timing';
 import type { TileReply, TileRequest } from './worker';
 
 export interface Frame3 {
@@ -793,6 +793,9 @@ export class Renderer3 {
     this.stats.tiles = tiles; this.stats.tris = tris;
   }
 
+  /** The next frame starts without band history: for a jump the frames themselves may not show. */
+  resetHistory(): void { this.hist = null; }
+
   /** Whether this frame may hold the last one's bands, and remembers this frame for the next. */
   private stepHistory(f: Frame3): boolean {
     const now = this.keys[this.hist === this.keys[0] ? 1 : 0], v = now.view, p = f.camPos, q = f.camQ;
@@ -831,7 +834,7 @@ export class Renderer3 {
     return t ? { delivered: t.delivered, dropped: t.dropped, discarded: t.discarded, lost: t.lost } : { delivered: 0, dropped: 0, discarded: 0, lost: 0 };
   }
   /** Per-pass graphics timing instead of the whole frame (prototype measurement; needs the timer extension).
-   *  Set before the first frame. While it is on, onGpu is not called. */
+   *  Set before the first frame. While it is on, onGpu is not called and stats.gpuMs is the sum of the passes. */
   profile = false;
   /** Smoothed graphics ms per pass, in PASSES order, while profiling. */
   readonly passMs = new Float64Array(PASSES.length);
@@ -844,11 +847,13 @@ export class Renderer3 {
   };
   private readonly takePass = Array.from(PASSES, (_, i) => (_frame: number, ms: number): void => {
     this.passMs[i] += (ms - this.passMs[i]) * 0.1;
+    this.stats.gpuMs = shownGpuMs(true, 0, this.passMs);
   });
   private queryApi(ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }): QueryApi<WebGLQuery> {
     const gl = this.gl;
     return {
       create: () => gl.createQuery()!,
+      remove: q => gl.deleteQuery(q),
       begin: q => gl.beginQuery(ext.TIME_ELAPSED_EXT, q),
       end: () => gl.endQuery(ext.TIME_ELAPSED_EXT),
       available: q => gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE) as boolean,

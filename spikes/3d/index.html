@@ -8,13 +8,48 @@
 <style>
   html,body{margin:0;height:100%;background:#000;overflow:hidden}
   canvas{display:block;width:100vw;height:100vh}
-  #info{position:fixed;left:6px;bottom:6px;margin:0;padding:4px 6px;font:11px/1.25 monospace;color:#7f7;background:#000a;
+  [hidden]{display:none !important}
+  pre{margin:0;font-family:monospace}
+  #info{position:fixed;left:6px;bottom:6px;padding:4px 6px;font-size:11px;line-height:1.25;color:#7f7;background:#000a;
         pointer-events:none;white-space:pre;z-index:2}
+  #reticle,#centre{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font:bold 22px/1 monospace;
+        pointer-events:none;user-select:none;z-index:1;text-shadow:0 0 3px #000,0 0 3px #000}
+  #reticle{color:#ffd75f}
+  #centre{color:#9ab}
+  .panel{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);max-width:96vw;max-height:94vh;overflow:auto;
+        padding:14px 18px;color:#cfe;background:#000d;border:1px solid #575;z-index:3}
+  #help{pointer-events:none;font-size:14px;line-height:1.4}
+  #note{color:#fb6;white-space:pre-wrap}
+  #report{font-size:13px;line-height:1.4;user-select:text}
+  #reportHint{margin-top:10px;color:#ffd75f;white-space:pre-wrap}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <pre id="info"></pre>
+<div id="centre" hidden>&middot;</div>
+<div id="reticle" hidden>+</div>
+<div id="help" class="panel" hidden><pre>ASTERION 3D spike: paused
+
+CLICK TO FLY.  Esc frees the mouse and pauses.
+
+Mouse   steer: move the + away from the centre dot and the ship
+        turns that way; bring it back to the dot to fly straight
+W / S   thrust / brake
+A / D   roll left / right
+Z / C   strafe left / right
+R / G   strafe up / down
+Shift   boost (while thrusting)
+Y       cruise on / off: fast travel high above the planet,
+        ends by itself near it
+H       level horizon on / off (acts inside the atmosphere)
+1 2 3   stability mode: 1 dithered, 2 plain, 3 held (start)
+B       back to the start in space
+P       show / hide the figures
+
+Reports: add ?auto=perf or ?auto=flicker to the address.</pre>
+<pre id="note"></pre></div>
+<div id="report" class="panel" hidden><pre id="reportText"></pre><pre id="reportHint">Press C to copy this report.</pre></div>
 <script type="module" src="./main.ts"></script>
 </body>
 </html>
