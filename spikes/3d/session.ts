@@ -1,7 +1,7 @@
 /** A free flight without a browser: the start in space, fixed 60 Hz stepping and the state to draw between steps. */
 import { DT } from '../../src/sim/sim';
 import type { Controls } from './controls';
-import { type Input, type ShipState, newShip, stepShip } from './flight';
+import { type Input, type ShipState, type Surroundings, newShip, stepShip } from './flight';
 import { type Vec3, addScaled, copy, cross, dot, norm, qFromBasis, qIdentity, qSlerp, v3 } from './math';
 import { type Planet, surfaceRadius } from './planet';
 
@@ -24,6 +24,13 @@ function placeAtStart(ship: ShipState, planet: Planet, dir: Vec3): void {
   ship.alt = START_ALT;
 }
 
+/** A world scene's part in a flight: what else there is to fly among, and where the flight starts. */
+export interface Setup {
+  near?: Surroundings;
+  /** Places a new ship; absent: in space over the start direction. */
+  start?(ship: ShipState): void;
+}
+
 export class FlightSession {
   ship = newShip();
   /** The ship as drawn: between the last two steps, by the share of a step not yet simulated. */
@@ -37,8 +44,8 @@ export class FlightSession {
   };
 
   /** `dir`: the ground direction the start is over. */
-  constructor(readonly planet: Planet, private readonly dir: Vec3) {
-    placeAtStart(this.ship, planet, dir);
+  constructor(readonly planet: Planet, private readonly dir: Vec3, private readonly setup: Setup = {}) {
+    this.place();
     this.blend();
   }
 
@@ -47,7 +54,7 @@ export class FlightSession {
     const level = this.ship.level;
     this.ship = newShip();
     this.ship.level = level;
-    placeAtStart(this.ship, this.planet, this.dir);
+    this.place();
     controls.neutral();
     this.blend();
   }
@@ -59,7 +66,7 @@ export class FlightSession {
     let n = 0;
     while (n < MAX_STEPS && this.acc >= DT - SLACK) {
       controls.read(this.input);
-      stepShip(this.ship, this.input, this.planet);
+      stepShip(this.ship, this.input, this.planet, DT, this.setup.near);
       this.acc = Math.max(0, this.acc - DT);
       n++;
     }
@@ -69,6 +76,11 @@ export class FlightSession {
     return n;
   }
 
+  private place(): void {
+    if (this.setup.start) this.setup.start(this.ship);
+    else placeAtStart(this.ship, this.planet, this.dir);
+  }
+
   private blend(): void {
     const s = this.ship, a = Math.min(1, this.acc / DT);
     this.pos.x = s.prevPos.x + (s.pos.x - s.prevPos.x) * a;
@@ -76,5 +88,6 @@ export class FlightSession {
     this.pos.z = s.prevPos.z + (s.pos.z - s.prevPos.z) * a;
     qSlerp(this.q, s.prevQ, s.q, a);
     this.time = (this.steps - 1) * DT + this.acc;
+    this.setup.near?.moon?.place(this.time); // where the picture and the camera are to find it
   }
 }

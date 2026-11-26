@@ -1,5 +1,6 @@
 /** The seeded planet: one height function drives both collision and the mesh. */
 import { clamp } from '../../src/core/util';
+import { craterHeight } from './craters';
 import { floorRadius } from './gas';
 import { type Vec3, len, norm, sub, v3 } from './math';
 import { noise, smooth } from './noise';
@@ -10,8 +11,8 @@ export enum Mat { Sky = 0, Water = 1, Land = 2, Ice = 3, Rock = 4, Hull = 5 }
 export interface Planet {
   center: Vec3; radius: number; atmo: number; relief: number; seed: number;
   /** Absent: the default planet, land and sea. 'gas': no ground, cloud tops at `radius` and a hard floor below
-   *  them (gas.ts). */
-  kind?: 'gas';
+   *  them (gas.ts). 'moon': airless, cratered ground above and below `radius` and no sea (moon.ts, craters.ts). */
+  kind?: 'gas' | 'moon';
 }
 
 const OCTAVES = 7;
@@ -29,6 +30,7 @@ export function makePlanet(seed: number, radius2d = 46): Planet {
 
 /** Ground height above `radius` toward the unit direction `dir`, within +-relief. Below 0 is seabed. */
 export function height(p: Planet, dir: Vec3): number {
+  if (p.kind === 'moon') return craterHeight(p, dir);
   let sum = 0, amp = 1, freq = p.radius / WAVELENGTH;
   for (let o = 0; o < OCTAVES; o++) {
     sum += amp * (2 * noise(dir.x * freq, dir.y * freq, dir.z * freq, p.seed * OCTAVES + o) - 1);
@@ -40,7 +42,8 @@ export function height(p: Planet, dir: Vec3): number {
 /** Distance from the centre to what you can hit: the ground, or the sea where the ground is below it; on a gas
  *  giant, the floor. */
 export function surfaceRadius(p: Planet, dir: Vec3): number {
-  return p.kind === 'gas' ? floorRadius(p) : p.radius + Math.max(0, height(p, dir));
+  if (p.kind === 'gas') return floorRadius(p);
+  return p.radius + (p.kind === 'moon' ? height(p, dir) : Math.max(0, height(p, dir)));
 }
 
 const rel = v3();
@@ -49,13 +52,15 @@ export function altitude(p: Planet, pos: Vec3): number {
   return d - surfaceRadius(p, norm(rel, rel));
 }
 
-/** 1 at sea level and below, 0 from the top of the atmosphere up. */
+/** 1 at sea level and below, 0 from the top of the atmosphere up, and 0 everywhere without one. */
 export function atmoDensity(p: Planet, pos: Vec3): number {
+  if (p.atmo <= 0) return 0;
   const h = len(sub(rel, pos, p.center)) - p.radius;
   return h <= 0 ? 1 : 1 - smooth(clamp(h / p.atmo, 0, 1));
 }
 
-export function material(_p: Planet, dir: Vec3, h: number): Mat {
+export function material(p: Planet, dir: Vec3, h: number): Mat {
+  if (p.kind === 'moon') return Mat.Land;
   if (h <= 0) return Mat.Water;
   return Math.abs(dir.y) > ICE_Y ? Mat.Ice : Mat.Land;
 }

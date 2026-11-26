@@ -15,22 +15,27 @@ export class ChaseCamera {
   readonly pos = v3();
   readonly q = qIdentity();
 
-  /** Puts the camera straight behind the ship. */
-  snap(ship: Vec3, shipQ: Quat, planet: Planet): void {
+  /** Puts the camera straight behind the ship. `moon`: another body to stay above. */
+  snap(ship: Vec3, shipQ: Quat, planet: Planet, moon?: Planet): void {
     Object.assign(this.q, shipQ);
-    this.place(ship, planet);
+    this.place(ship, planet, moon);
   }
 
   /** `dt` is the time the ship has moved by; 0 leaves the camera where it is. */
-  update(ship: Vec3, shipQ: Quat, planet: Planet, dt: number): void {
+  update(ship: Vec3, shipQ: Quat, planet: Planet, dt: number, moon?: Planet): void {
     if (!(dt > 0)) return;
     qSlerp(this.q, this.q, shipQ, 1 - Math.exp(-EASE * dt));
-    this.place(ship, planet);
+    this.place(ship, planet, moon);
   }
 
-  private place(ship: Vec3, planet: Planet): void {
+  private place(ship: Vec3, planet: Planet, moon?: Planet): void {
     add(this.pos, ship, qRotate(this.pos, this.q, CHASE));
-    const low = MIN_ALT - altitude(planet, this.pos);
-    if (low > 0) addScaled(this.pos, this.pos, norm(radial, sub(radial, this.pos, planet.center)), low);
+    this.lift(planet);
+    if (moon) this.lift(moon);
+  }
+
+  private lift(body: Planet): void {
+    const low = MIN_ALT - altitude(body, this.pos);
+    if (low > 0) addScaled(this.pos, this.pos, norm(radial, sub(radial, this.pos, body.center)), low);
   }
 }

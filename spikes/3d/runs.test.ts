@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DT } from '../../src/sim/sim';
 import { ChaseCamera, MIN_ALT } from './camera';
-import { type Quat, type Vec3, len, qRotate, v3 } from './math';
+import { type Quat, type Vec3, len, qRotate, sub, v3 } from './math';
+import { moonPosition } from './moon';
 import { pose } from './path';
 import { altitude, makePlanet } from './planet';
 import type { Frame3 } from './render';
@@ -263,5 +264,28 @@ describe('a report in a world scene', () => {
     expect(run.data().frames).toBe(24);
     const last = r.frames[r.frames.length - 1];
     expect(last.ship!.pos).toEqual(scene.pose(last.time).shipPos);
+  });
+});
+
+describe('a report round the moon', () => {
+  const scene = makeScene(makeWorld('moon')), p = scene.world.planet, moon = scene.world.moon!;
+
+  it('keeps the camera clear of the moon where it is at that moment', () => {
+    const r = new Fake(), windows = reportWindows('0.1', 0).slice(2, 3).map(w => ({ ...w, mode: 2 as const }));
+    const run = new FlickerRun(r, p, windows, undefined, scene);
+    while (run.tick()) {
+      const f = r.frames[r.frames.length - 1];
+      expect(altitude({ ...moon.body, center: moonPosition(v3(), p, f.time) }, f.camPos)).toBeGreaterThanOrEqual(MIN_ALT - 1e-6);
+      expect(len(sub(v3(), moon.body.center, moonPosition(v3(), p, f.time)))).toBeLessThan(1e-6);
+    }
+  });
+
+  it('times the simulation with the moon in it', () => {
+    const r = new Fake(), windows = reportWindows('0.1', 2);
+    let at = 0;
+    const run = new PerfRun(r, p, windows, () => at += 0.5, undefined, scene);
+    while (run.tick()) run.end(16.7, 2);
+    expect(run.data().frames).toBe(24);
+    expect(moon.time).toBeCloseTo(r.frames[r.frames.length - 1].time + DT, 6);
   });
 });

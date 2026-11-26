@@ -6,6 +6,7 @@ import { CRUSH_TICK, crushRadius, cloudAltitude, cruiseDatum } from './gas';
 import {
   type Quat, type Vec3, addScaled, copy, dot, len, norm, qAxisAngle, qIdentity, qMul, qNorm, qRotate, scale, sub, v3,
 } from './math';
+import type { Moon } from './moon';
 import { type Planet, altitude, atmoDensity } from './planet';
 import { SCALE } from './scale';
 
@@ -14,6 +15,7 @@ export const SHIP_R = 5;
 const ROLL_RATE = 3.5, DEAD_ZONE = 0.05, GRAVITY = 9.5, LEVEL_RATE = 1.5;
 const LEVEL_LIMIT = Math.cos(10 * Math.PI / 180); // nose closer than this to straight up or down: no auto-level
 const CRUISE_EXIT = 1.5; // times the atmosphere height
+const AIRLESS_EXIT = 0.5; // of the radius: without an atmosphere, cruise ends no lower than this
 const WALK_BELOW = 500, WALK_STEP = 4;
 const BOUNCE = 1.6, HIT_SPEED = 22;
 
@@ -45,6 +47,15 @@ export function newShip(): ShipState {
     pos: v3(), prevPos: v3(), q: qIdentity(), prevQ: qIdentity(), vel: v3(),
     boostE: WREN.boostCap, cruising: false, level: true, hits: 0, crushTime: 0, crushDamage: 0, alt: 0,
   };
+}
+
+/** What else there is to fly among, in a world scene. */
+export interface Surroundings { moon?: Moon }
+
+/** Cruise ends below this height over a body. */
+export function cruiseExit(body: Planet): number {
+  const exit = CRUISE_EXIT * body.atmo;
+  return body.atmo > 0 ? exit : Math.max(exit, AIRLESS_EXIT * body.radius);
 }
 
 // temporaries, so that stepping allocates nothing
@@ -101,24 +112,33 @@ function accelerate(s: ShipState, input: Input, planet: Planet, boosting: boolea
   if (speed > top) scale(vel, vel, 1 - Math.min(1, FLIGHT.SPEED_CAP_K * dt) * (1 - top / speed));
 }
 
+/** The heights over the planet and over the moon (if there is one) at the ship's place; `alt` is the lower. */
+let overPlanet = 0, overMoon = Infinity;
+function sense(s: ShipState, planet: Planet, near?: Surroundings): void {
+  overPlanet = altitude(planet, s.pos);
+  overMoon = near?.moon ? altitude(near.moon.body, s.pos) : Infinity;
+  s.alt = Math.min(overPlanet, overMoon);
+}
+
 /** Moves for `dt`, near the ground in short pieces so that no speed or step length can pass through it. */
-function move(s: ShipState, planet: Planet, dt: number): void {
+function move(s: ShipState, planet: Planet, dt: number, near?: Surroundings): void {
   let left = dt;
   while (left > 0) {
     const reach = Math.max(WALK_STEP, s.alt - WALK_BELOW), speed = len(s.vel);
     const t = speed * left > reach ? reach / speed : left;
     addScaled(s.pos, s.pos, s.vel, t);
     left -= t;
-    s.alt = altitude(planet, s.pos);
-    dropOutOfCruise(s, planet); // checked on the way: a long step may dip below the limit and bounce back out
-    if (s.alt < SHIP_R) contact(s, planet);
+    sense(s, planet, near);
+    dropOutOfCruise(s, planet, near); // checked on the way: a long step may dip below the limit and bounce back out
+    if (overPlanet < SHIP_R) contact(s, planet, overPlanet);
+    else if (overMoon < SHIP_R) contact(s, near!.moon!.body, overMoon);
   }
 }
 
-/** Pushes the ship out along the planet's radius and bounces it. */
-function contact(s: ShipState, planet: Planet): void {
-  norm(radial, sub(radial, s.pos, planet.center));
-  addScaled(s.pos, s.pos, radial, SHIP_R - s.alt);
+/** Pushes the ship, `alt` over the body's ground, out along the body's radius and bounces it. */
+function contact(s: ShipState, body: Planet, alt: number): void {
+  norm(radial, sub(radial, s.pos, body.center));
+  addScaled(s.pos, s.pos, radial, SHIP_R - alt);
   s.alt = SHIP_R;
   const closing = -dot(s.vel, radial);
   if (closing <= 0) return;
@@ -126,8 +146,9 @@ function contact(s: ShipState, planet: Planet): void {
   if (closing > HIT_SPEED) s.hits++;
 }
 
-function dropOutOfCruise(s: ShipState, planet: Planet): void {
-  if (s.alt - cruiseDatum(planet) < CRUISE_EXIT * planet.atmo) s.cruising = false;
+function dropOutOfCruise(s: ShipState, planet: Planet, near?: Surroundings): void {
+  if (overPlanet - cruiseDatum(planet) < cruiseExit(planet)) s.cruising = false;
+  if (near?.moon && overMoon < cruiseExit(near.moon.body)) s.cruising = false;
 }
 
 /** Counts the time spent below a gas giant's crush depth. */
@@ -137,12 +158,13 @@ function crush(s: ShipState, planet: Planet, dt: number): void {
   s.crushDamage = Math.floor(s.crushTime / CRUSH_TICK + 1e-6);
 }
 
-export function stepShip(s: ShipState, input: Input, planet: Planet, dt = DT): void {
+export function stepShip(s: ShipState, input: Input, planet: Planet, dt = DT, near?: Surroundings): void {
   copy(s.prevPos, s.pos);
   Object.assign(s.prevQ, s.q);
-  s.alt = altitude(planet, s.pos);
+  near?.moon?.step(s.pos, dt); // first: from here the ship moves against the moon where it now is
+  sense(s, planet, near);
   if (input.cruise) s.cruising = !s.cruising;
-  dropOutOfCruise(s, planet);
+  dropOutOfCruise(s, planet, near);
 
   steer(s, input, planet, dt);
   qRotate(fwd, s.q, NOSE);
@@ -152,10 +174,11 @@ export function stepShip(s: ShipState, input: Input, planet: Planet, dt = DT): v
   else s.boostE = Math.min(WREN.boostCap, s.boostE + WREN.boostRegen * dt);
 
   if (s.cruising) {
-    const above = s.alt - cruiseDatum(planet) - planet.atmo;
+    // the nearer body sets the pace
+    const above = Math.min(overPlanet - cruiseDatum(planet) - planet.atmo, overMoon - (near?.moon?.body.atmo ?? 0));
     scale(s.vel, fwd, clamp(above * SCALE.cruiseGain, WREN.maxSpeed, SCALE.cruiseMax));
   } else accelerate(s, input, planet, boosting, dt);
 
-  move(s, planet, dt);
+  move(s, planet, dt, near);
   crush(s, planet, dt);
 }

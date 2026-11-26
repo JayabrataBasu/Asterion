@@ -3,7 +3,7 @@ import { DT } from '../../src/sim/sim';
 import { ChaseCamera } from './camera';
 import type { CombatField } from './combat';
 import type { SwarmCounts, Tally } from './combatDraw';
-import { type Input, newShip, stepShip } from './flight';
+import { type Input, type Surroundings, newShip, stepShip } from './flight';
 import { copy, scale, sub, v3 } from './math';
 import { FlickerTally } from './metrics';
 import { type PathPose, pose } from './path';
@@ -61,12 +61,16 @@ class ReportCamera {
   private readonly chase = new ChaseCamera();
   private window = -1;
 
+  constructor(private readonly near?: Surroundings) {}
+
   /** Puts the ship of pose `p`, drawn at step `step`, and the camera into `frame`. */
   place(frame: Frame3, p: PathPose, step: PathStep): void {
+    const moon = this.near?.moon;
+    moon?.place(step.t);
     if (step.window !== this.window) {
       this.window = step.window;
-      this.chase.snap(p.shipPos, p.shipQ, frame.planet);
-    } else if (step.frame >= 0) this.chase.update(p.shipPos, p.shipQ, frame.planet, DT);
+      this.chase.snap(p.shipPos, p.shipQ, frame.planet, moon?.body);
+    } else if (step.frame >= 0) this.chase.update(p.shipPos, p.shipQ, frame.planet, DT, moon?.body);
     frame.camPos = this.chase.pos; frame.camQ = this.chase.q; frame.time = step.t;
     frame.ship!.pos = p.shipPos; frame.ship!.q = p.shipQ;
   }
@@ -84,7 +88,7 @@ export class FlickerRun {
   at: PathStep | null = null;
   private readonly path: PathRun;
   private readonly frame: Frame3;
-  private readonly camera = new ReportCamera();
+  private readonly camera: ReportCamera;
   private tally = new FlickerTally(0);
   private readonly sum = new CountSum();
 
@@ -92,6 +96,7 @@ export class FlickerRun {
     private readonly field?: SwarmSource, private readonly scene?: Scene) {
     this.path = new PathRun(windows, true);
     this.frame = newFrame(planet);
+    this.camera = new ReportCamera(scene?.near);
   }
 
   /** The swarm's counts so far (null without one). */
@@ -136,7 +141,7 @@ export class PerfRun {
   private readonly path: PathRun;
   private readonly frame: Frame3;
   private readonly measure: Measure;
-  private camera = new ReportCamera();
+  private camera: ReportCamera;
   private readonly sim = newShip();
   private readonly input: Input = { mx: 0, my: 0, thrust: true, brake: false, roll: 0, strafeX: 0, strafeY: 0, boost: false, cruise: false };
   private readonly last = v3();
@@ -153,6 +158,7 @@ export class PerfRun {
     private readonly now: () => number, private readonly field?: SwarmSource, private readonly scene?: Scene) {
     this.path = new PathRun(windows, false);
     this.frame = newFrame(planet);
+    this.camera = new ReportCamera(scene?.near);
     this.measure = new Measure(windows.reduce((n, w) => n + w.frames, 0));
     this.timerStep = timerStepMs(now);
   }
@@ -171,7 +177,7 @@ export class PerfRun {
       if (this.late >= LATE_FRAMES) {
         if (!this.field) return false;
         this.recount = new PathRun(this.windows, false);
-        this.camera = new ReportCamera();
+        this.camera = new ReportCamera(this.scene?.near);
         return this.count(this.recount);
       }
       this.late++;
@@ -194,8 +200,10 @@ export class PerfRun {
     scale(s.vel, sub(s.vel, p.shipPos, this.last), 1 / DT);
     copy(this.last, p.shipPos);
     s.cruising = false;
+    const near = this.scene?.near;
+    if (near?.moon) near.moon.time = step.t;
     const t1 = this.now();
-    stepShip(s, this.input, this.planet);
+    stepShip(s, this.input, this.planet, DT, near);
     const simMs = this.now() - t1;
 
     this.r.render(this.frame);

@@ -23,4 +23,13 @@ describe('the scene line of the readout', () => {
     expect(status.line).toContain('hull damage 3');
     expect(status.warning).toBe('CRUSH DEPTH  hull damage 3  climb!');
   });
+
+  it('gives the height over the moon and whether the ship is carried with it', () => {
+    const world = makeWorld('moon'), s = newShip(), moon = world.moon!;
+    moon.place(0);
+    s.pos.x = moon.body.center.x; s.pos.y = moon.body.center.y + 2000; s.pos.z = moon.body.center.z;
+    expect(sceneStatus(world, s, 0).line).toMatch(/^moon: \d+ above its ground   carried with it   cruise ends below 600$/);
+    s.pos.y += 5000;
+    expect(sceneStatus(world, s, 0).line).toContain('not carried');
+  });
 });

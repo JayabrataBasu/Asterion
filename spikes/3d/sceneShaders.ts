@@ -1,7 +1,7 @@
 /** GLSL for the world scenes. The default planet's shaders are not touched: a scene's resolve pass is a copy of
  *  FS_RESOLVE with a few lines changed, as FS_ASCII3 is of FS_ASCII. */
 import { NOISE } from '../../src/gfx/shaders';
-import { FS_RESOLVE, SUN } from './shaders';
+import { FS_RESOLVE, FS_WORLD, SUN } from './shaders';
 
 const LOGDEPTH = `
 uniform float uFC;
@@ -151,3 +151,24 @@ const float HAZE_K = 0.45;`);
   return swap(t, 'rgb = mix(rgb, SKY * 0.42 * (lit / max(opt, 1e-6)), fog);',
     'rgb = mix(rgb, SKY * 0.36 * (lit / max(opt, 1e-6)) * mix(vec3(1.0), vec3(0.62, 0.34, 0.26), uDeep), fog);');
 })();
+
+// ------------------------------------------------------------------ moon
+
+/** The moon's ground: FS_WORLD with grey regolith. Albedo follows height (dark floors, pale rims) and patches that
+ *  stay on the moon; the hillshade is far less exaggerated, as crater walls are steep already. */
+export const FS_MOON = swap(swap(FS_WORLD,
+  'const float RELIEF_GAIN = 6.0;', 'const float RELIEF_GAIN = 3.2;'),
+  '  if (vMat == 4) alb = vCol;\n', `  if (vMat != 4) {
+    vec3 wp = vRad * uR;                                       // moon-relative point
+    float t = vH / uRelief;                                    // about -0.8 in the deepest floors, 0.35 on high rims
+    float seas = smoothstep(0.38, 0.62, vn3(wp * 0.0027 + 3.0));
+    float patches = vn3(wp * 0.011) * 0.6 + vn3(wp * 0.037) * 0.4;
+    float grain = mix(0.5, vn3(wp * 0.13), 1.0 - smoothstep(1.5, 5.0, cell));   // fades before it would sparkle
+    float steep = 1.0 - dot(nd, vRad);
+    float v = mix(0.18, 0.29, seas) * (0.82 + 0.36 * patches) * (0.76 + 0.48 * grain);
+    v *= mix(0.22, 1.90, smoothstep(-0.20, 0.15, t));
+    v += 0.35 * smoothstep(0.015, 0.09, steep) * k;
+    alb = vec3(v) * vec3(1.03, 1.0, 0.94);
+  }
+  else if (vMat == 4) alb = vCol;
+`);

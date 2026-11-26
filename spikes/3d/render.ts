@@ -243,7 +243,9 @@ export class Renderer3 {
     this.vaoEmpty = gl.createVertexArray()!;
     this.swarmLayer = opts.swarm ? new SwarmLayer(gl, opts.swarm, (vs, fs) => this.prog(vs, fs)) : null;
     this.scene = opts.world
-      ? makeSceneLayer(opts.world, { gl, prog: (vs, fs) => this.prog(vs, fs), locs: (p, names) => this.locs(p, names) }) : null;
+      ? makeSceneLayer(opts.world, {
+        gl, sync: this.sync, requestOrder, evictKeys, prog: (vs, fs) => this.prog(vs, fs), locs: (p, names) => this.locs(p, names),
+      }) : null;
 
     // planet tiles: one big buffer per attribute, one slot per cached tile, one VAO per slot (all made here, once)
     const idx = tileIndices(); this.nIdx = idx.length;

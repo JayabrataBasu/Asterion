@@ -192,15 +192,15 @@ export function buildTile(p: Planet, id: TileId): TileMesh {
   /* Skirt: a wall from the border straight down to one radius for all tiles. No surface, of any depth, goes lower
    * than the sag of the widest cell (a root's, pi / (2 TILE_N) radians) below sea level, and neighbours share the
    * vertical plane of their common edge, so the wall of the higher one closes any step. 1 unit spare for rounding. */
-  const foot = p.radius * Math.cos(Math.PI / (4 * TILE_N)) - 1;
+  const foot = p.radius * Math.cos(Math.PI / (4 * TILE_N)) - 1 - (p.kind === 'moon' ? p.relief : 0); // craters go below
 
   for (let j = 0; j <= TILE_N; j++) {
     for (let i = 0; i <= TILE_N; i++) {
       const k = j * ROW + i;
       faceDir(dir, id.face, coord(id.depth, id.ix, i), coord(id.depth, id.iy, j));
-      const h = height(p, dir), r = p.radius + Math.max(0, h);
+      const h = height(p, dir), dry = p.kind === 'moon', r = p.radius + (dry ? h : Math.max(0, h));
       put(pos, k, sub(at, scale(at, dir, r), middle));
-      put(nrm, k, h > 0 ? surfaceNormal(n, p, dir, r) : dir);
+      put(nrm, k, dry || h > 0 ? surfaceNormal(n, p, dir, r) : dir);
       mat[k] = material(p, dir, h);
     }
   }

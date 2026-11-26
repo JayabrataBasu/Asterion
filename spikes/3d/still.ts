@@ -18,7 +18,7 @@ export function showStill(page: Page): void {
   const stab = stabParam();
   const measure = params.get('measure') === '1';
   const showShip = params.get('ship') !== '0'; // ship=0 hides the ship, to look at the ground
-  const view = scene.view(params.get('look') ?? '') ?? scene.pose(seconds);
+  const view = scene.view(params.get('look') ?? '', seconds) ?? scene.pose(seconds);
   renderer.rockDir = scene.focus;
 
   const frame: Frame3 = {
@@ -26,7 +26,9 @@ export function showStill(page: Page): void {
     time: seconds, stab, swarm: field?.swarm,
   };
   field?.update(seconds, view.shipPos, view.shipQ, planet); // one moment: it stays
-  const alt = altitude(planet, view.shipPos);
+  const moon = scene.near?.moon;
+  moon?.place(seconds);
+  const alt = Math.min(altitude(planet, view.shipPos), moon ? altitude(moon.body, view.shipPos) : Infinity);
   let ready = false;
   let win: Measure | null = null, lateLeft = LATE_FRAMES;
   let report = '', dumpText = '', prevNow = 0;

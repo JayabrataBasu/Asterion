@@ -6,12 +6,19 @@ import { type Quat, type Vec3, copy, qRotate, sub, v3 } from './math';
 import type { Planet } from './planet';
 import { FS_GAS, FS_RESOLVE_GAS } from './sceneShaders';
 import type { World } from './world';
+import { MoonLayer } from './moonLayer';
+import type { evictKeys, requestOrder } from './render';
 
 export type Loc = Record<string, WebGLUniformLocation | null>;
 
 /** The renderer's helpers a layer builds its programs with. */
 export interface LayerKit {
   gl: WebGL2RenderingContext;
+  /** Meshes are built here and now, not in workers. */
+  sync: boolean;
+  /** The planet tile cache's rules (render.ts). */
+  requestOrder: typeof requestOrder;
+  evictKeys: typeof evictKeys;
   prog(vs: string, fs: string): WebGLProgram;
   locs(p: WebGLProgram, names: string[]): Loc;
 }
@@ -94,5 +101,6 @@ class GasLayer implements SceneLayer {
 }
 
 export function makeSceneLayer(world: World, kit: LayerKit): SceneLayer | null {
+  if (world.moon) return new MoonLayer(kit, world.moon);
   return world.scene === 'gas' ? new GasLayer(kit) : null;
 }
