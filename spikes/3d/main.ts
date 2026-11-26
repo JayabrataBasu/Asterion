@@ -7,6 +7,7 @@ import {
 import { type Planet, altitude, height, makePlanet, surfaceRadius } from './planet';
 import { CHARSET } from '../../src/gfx/atlas';
 import { FOV_Y, type Frame3, PASSES, Renderer3 } from './render';
+import { Measure } from './timing';
 import { SUN } from './shaders';
 
 const params = new URLSearchParams(location.search);
@@ -121,20 +122,27 @@ const frame: Frame3 = {
   camPos: pose.camPos, camQ: pose.camQ, ship: showShip ? { pos: pose.shipPos, q: pose.shipQ } : null, planet, time: 0, stab,
 };
 const alt = altitude(planet, pose.shipPos);
-let ready = false, last = 0;
-const frameMs: number[] = [], cpuMs: number[] = [], gpuMs: number[] = [];
+let ready = false;
+const MEASURE_FRAMES = 300, LATE_FRAMES = 30; // graphics results arrive a few frames late
+let win: Measure | null = null, lateLeft = LATE_FRAMES;
 let report = '', dumpText = '';
+renderer.onGpu = (f, ms) => win?.gpu(f, ms);
 
-function pct(v: number[], q: number): number {
-  const s = [...v].sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)] ?? 0;
+/** Ends the measurement window: one line for the readout and the console. */
+function measureReport(m: Measure): string {
+  const r = m.result(), c = renderer.gpuCounts, f = (x: number): string => x.toFixed(2);
+  return `\nmeasured ${r.frames} frames: frame interval p50 ${f(r.frame.p50)} p95 ${f(r.frame.p95)} max ${f(r.frame.max)} ms, ${r.slowFrames} over 25 ms` +
+    ` | whole tick (processor) p50 ${f(r.tick.p50)} p95 ${f(r.tick.p95)} max ${f(r.tick.max)} ms` +
+    (renderer.hasTimer
+      ? ` | graphics p50 ${f(r.gpu.p50)} p95 ${f(r.gpu.p95)} max ${f(r.gpu.max)} ms from ${r.gpuSamples} fresh samples,` +
+        ` ${r.gpuMissing} frames without one (timer totals: dropped ${c.dropped} discarded ${c.discarded} lost ${c.lost})`
+      : ' | graphics n/a (no timer extension)');
 }
 
 function tick(now: number): void {
-  fit();
   const t0 = performance.now();
+  fit();
   renderer.render(frame);
-  const cpu = performance.now() - t0;
   const st = renderer.stats;
   if (!ready && renderer.settled) {
     ready = true; document.title = 'ready';
@@ -148,16 +156,6 @@ function tick(now: number): void {
         rows.slice(renderer.rows >> 1, (renderer.rows >> 1) + 3).map(r => r.slice(0, 120)).join('\n');
     }
   }
-  if (ready && measure && frameMs.length < 300) {
-    if (last > 0) { frameMs.push(now - last); cpuMs.push(cpu); if (renderer.hasTimer) gpuMs.push(renderer.gpuMsLast); }
-    if (frameMs.length === 300) {
-      report = `\nmeasured 300 frames: frame p50 ${pct(frameMs, 0.5).toFixed(2)} p95 ${pct(frameMs, 0.95).toFixed(2)} ms` +
-        ` | render() cpu p50 ${pct(cpuMs, 0.5).toFixed(2)} p95 ${pct(cpuMs, 0.95).toFixed(2)} ms` +
-        (gpuMs.length ? ` | gpu p50 ${pct(gpuMs, 0.5).toFixed(2)} p95 ${pct(gpuMs, 0.95).toFixed(2)} ms` : ' | gpu n/a');
-      console.log('MEASURE pose', poseIdx, renderer.W + 'x' + renderer.H, report.trim());
-    }
-  }
-  last = now;
   info.textContent =
     `pose ${poseIdx}  ship altitude ${alt.toFixed(0)}  stab ${stab}  ${sync ? 'sync' : 'worker'}  fov ${(FOV_Y * 180 / Math.PI).toFixed(0)}\n` +
     `canvas ${renderer.W}x${renderer.H}  grid ${renderer.cols}x${renderer.rows}  ${ready ? 'settled' : 'loading'}\n` +
@@ -166,6 +164,14 @@ function tick(now: number): void {
     (renderer.profile ? 'passes ms: ' + PASSES.map((n, i) => `${n} ${renderer.passMs[i].toFixed(2)}`).join('  ') + '\n' : '') +
     `${gpuName}${report}${dumpText}`;
   requestAnimationFrame(tick);
+  // the window: whole-callback processor time (resize check, render, readout, scheduling the next frame)
+  if (ready && measure && !report) {
+    if (!win) win = new Measure(MEASURE_FRAMES);
+    else if (!win.full) win.frame(renderer.frame, now - prevNow, performance.now() - t0);
+    else if (--lateLeft === 0) { report = measureReport(win); console.log('MEASURE pose', poseIdx, renderer.W + 'x' + renderer.H, report.trim()); }
+  }
+  prevNow = now;
 }
+let prevNow = 0;
 fit();
 requestAnimationFrame(tick);

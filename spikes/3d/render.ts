@@ -13,6 +13,7 @@ import * as S from './shaders';
 import {
   TILE_N, type TileId, type TileMesh, buildTile, faceDir, resolveDrawList, selectTiles, tileIndices, tileKey,
 } from './tiles';
+import { FrameTimer, type QueryApi } from './timing';
 import type { TileReply, TileRequest } from './worker';
 
 export interface Frame3 {
@@ -179,7 +180,6 @@ export class Renderer3 {
   private readonly tmp = v3();
 
   private timerExt: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null = null;
-  private readonly queries: WebGLQuery[] = []; private qIdx = 0; private readonly qPending = [false, false, false];
 
   constructor(readonly canvas: HTMLCanvasElement, opts: { sync: boolean }) {
     this.sync = opts.sync;
@@ -188,7 +188,6 @@ export class Renderer3 {
     this.gl = gl;
     this.hdr = !!gl.getExtension('EXT_color_buffer_float');
     this.timerExt = gl.getExtension('EXT_disjoint_timer_query_webgl2');
-    if (this.timerExt) for (let i = 0; i < 3; i++) this.queries.push(gl.createQuery()!);
 
     this.pTile = this.prog(S.VS_TILE, S.FS_WORLD); this.pRock = this.prog(S.VS_ROCK, S.FS_WORLD);
     this.pResolve = this.prog(VS_FULLSCREEN, S.FS_RESOLVE); this.pShip = this.prog(S.VS_SHIP, S.FS_SHIP);
@@ -563,10 +562,10 @@ export class Renderer3 {
   render(f: Frame3): void {
     const gl = this.gl, st = settings, p = f.planet;
     this.frameNo++;
+    this.timerBegin();
     this.refreshAtlas();
     this.updateTiles(f);
     this.placeRocks(p);
-    this.timerBegin();
 
     const { cols, rows } = this;
     const aspect = cols / (rows * 2), tanY = Math.tan(FOV_Y / 2);
@@ -765,57 +764,66 @@ export class Renderer3 {
   }
 
   // ------------------------------------------------------------------ GPU timing
-  private timerBegin(): void {
-    if (!this.timerExt || this.profile || this.qPending[this.qIdx]) return;
-    this.gl.beginQuery(this.timerExt.TIME_ELAPSED_EXT, this.queries[this.qIdx]);
+  /** Called once for each frame whose graphics time came back, with that frame's number (see `frame`) and ms.
+   *  Frames whose query was dropped, lost or read during a disjoint event never get a call. */
+  onGpu: ((frame: number, ms: number) => void) | null = null;
+  /** Number of the last frame rendered, as passed to onGpu. */
+  get frame(): number { return this.frameNo; }
+  /** The whole-frame timer's counts: delivered, dropped (no free query), discarded (disjoint), lost (never came). */
+  get gpuCounts(): { delivered: number; dropped: number; discarded: number; lost: number } {
+    const t = this.frameTimer;
+    return t ? { delivered: t.delivered, dropped: t.dropped, discarded: t.discarded, lost: t.lost } : { delivered: 0, dropped: 0, discarded: 0, lost: 0 };
   }
-  private timerEnd(): void {
-    const gl = this.gl, ext = this.timerExt;
-    if (!ext || this.profile) return;
-    if (!this.qPending[this.qIdx]) { gl.endQuery(ext.TIME_ELAPSED_EXT); this.qPending[this.qIdx] = true; }
-    this.qIdx = (this.qIdx + 1) % 3;
-    for (let i = 0; i < 3; i++) {
-      if (!this.qPending[i] || !gl.getQueryParameter(this.queries[i], gl.QUERY_RESULT_AVAILABLE)) continue;
-      if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) {
-        const ms = (gl.getQueryParameter(this.queries[i], gl.QUERY_RESULT) as number) / 1e6;
-        this.gpuMsLast = ms; this.stats.gpuMs += (ms - this.stats.gpuMs) * 0.1;
-      }
-      this.qPending[i] = false;
-    }
-  }
-  /** Per-pass graphics timing instead of the whole frame (prototype measurement; needs the timer extension). */
+  /** Per-pass graphics timing instead of the whole frame (prototype measurement; needs the timer extension).
+   *  Set before the first frame. While it is on, onGpu is not called. */
   profile = false;
   /** Smoothed graphics ms per pass, in PASSES order, while profiling. */
   readonly passMs = new Float64Array(PASSES.length);
-  private readonly pq: WebGLQuery[][] = []; private readonly pqPending = [false, false, false];
-  private pqSet = 0; private pqOpen = false;
-  /** Ends the running pass query and starts the one for pass `i` (PASSES.length: none, end of frame). */
-  private mark(i: number): void {
-    const gl = this.gl, ext = this.timerExt;
-    if (!ext || !this.profile) return;
-    if (this.pq.length === 0) for (let k = 0; k < 3; k++) this.pq.push(PASSES.map(() => gl.createQuery()!));
-    if (this.pqOpen) { gl.endQuery(ext.TIME_ELAPSED_EXT); this.pqOpen = false; }
-    if (i < PASSES.length) {
-      if (!this.pqPending[this.pqSet]) { gl.beginQuery(ext.TIME_ELAPSED_EXT, this.pq[this.pqSet][i]); this.pqOpen = true; }
-      return;
-    }
-    this.pqPending[this.pqSet] = true;
-    this.pqSet = (this.pqSet + 1) % 3;
-    for (let k = 0; k < 3; k++) {
-      if (!this.pqPending[k] || !gl.getQueryParameter(this.pq[k][PASSES.length - 1], gl.QUERY_RESULT_AVAILABLE)) continue;
-      if (!gl.getParameter(ext.GPU_DISJOINT_EXT)) {
-        let total = 0;
-        for (let j = 0; j < PASSES.length; j++) {
-          const ms = (gl.getQueryParameter(this.pq[k][j], gl.QUERY_RESULT) as number) / 1e6;
-          this.passMs[j] += (ms - this.passMs[j]) * 0.1; total += ms;
-        }
-        this.gpuMsLast = total; this.stats.gpuMs += (total - this.stats.gpuMs) * 0.1;
-      }
-      this.pqPending[k] = false;
-    }
+  private frameTimer: FrameTimer<WebGLQuery> | null = null;
+  private passTimers: FrameTimer<WebGLQuery>[] = [];
+  private markOpen = -1; private disjointNow = false;
+  private readonly takeFrame = (frame: number, ms: number): void => {
+    this.stats.gpuMs += (ms - this.stats.gpuMs) * 0.1;
+    this.onGpu?.(frame, ms);
+  };
+  private readonly takePass = Array.from(PASSES, (_, i) => (_frame: number, ms: number): void => {
+    this.passMs[i] += (ms - this.passMs[i]) * 0.1;
+  });
+  private queryApi(ext: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number }): QueryApi<WebGLQuery> {
+    const gl = this.gl;
+    return {
+      create: () => gl.createQuery()!,
+      begin: q => gl.beginQuery(ext.TIME_ELAPSED_EXT, q),
+      end: () => gl.endQuery(ext.TIME_ELAPSED_EXT),
+      available: q => gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE) as boolean,
+      resultNs: q => gl.getQueryParameter(q, gl.QUERY_RESULT) as number,
+      disjoint: () => this.disjointNow, // read once per frame, shared by every timer
+    };
   }
-  /** The last graphics time read back, in ms (the stats value is smoothed). */
-  gpuMsLast = 0;
+  private timerBegin(): void {
+    const ext = this.timerExt;
+    if (!ext) return;
+    if (!this.frameTimer) {
+      const api = this.queryApi(ext);
+      this.frameTimer = new FrameTimer(api, 6);
+      this.passTimers = PASSES.map(() => new FrameTimer(api, 6));
+    }
+    if (!this.profile) this.frameTimer.begin(this.frameNo);
+  }
+  private timerEnd(): void {
+    const ext = this.timerExt;
+    if (!ext || !this.frameTimer) return;
+    if (!this.profile) this.frameTimer.end();
+    this.disjointNow = this.gl.getParameter(ext.GPU_DISJOINT_EXT) as boolean;
+    this.frameTimer.poll(this.takeFrame);
+    for (let i = 0; i < this.passTimers.length; i++) this.passTimers[i].poll(this.takePass[i]);
+  }
+  /** Ends the running pass timer and starts the one for pass `i` (PASSES.length: none, end of frame). */
+  private mark(i: number): void {
+    if (!this.profile || this.passTimers.length === 0) return;
+    if (this.markOpen >= 0) { this.passTimers[this.markOpen].end(); this.markOpen = -1; }
+    if (i < PASSES.length) { this.passTimers[i].begin(this.frameNo); this.markOpen = i; }
+  }
   get hasTimer(): boolean { return this.timerExt !== null; }
 }
 
