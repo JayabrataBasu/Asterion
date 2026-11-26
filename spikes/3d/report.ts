@@ -127,7 +127,8 @@ function swarmLines(s: SwarmReport | undefined): string[] {
     row('counts', `mean of ${s.samples} sampled frames, one a second of path`),
     row('per frame', columns(['drawn', 'hidden', 'covered', 'off screen'])),
     kind('mesh ships', s.mean.ships), kind('marker ships', s.mean.markers), kind('bolts', s.mean.bolts), kind('particles', s.mean.particles),
-    '  hidden: all of it behind the world or a ship. covered: not hidden, but nearer characters take all its cells.',
+    '  hidden: on screen but nothing of it showed (behind the world or a ship; for a mesh ship, may just be off screen).',
+    '  covered: not hidden, but nearer characters take all its cells.',
   ];
 }
 const tilesBuilt = (i: RunInfo): string => (i.sync ? 'tiles built on the main thread' : 'tiles built by background workers');
