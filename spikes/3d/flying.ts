@@ -21,6 +21,10 @@ export function fly(page: Page): void {
   renderer.rockDir = focus;
   const controls = new Controls(), session = new FlightSession(planet, focus), camera = new ChaseCamera();
   camera.snap(session.pos, session.q, planet);
+  // here the swarm keeps its bearing, so that turning moves it across the screen (the reports and the still view
+  // let it follow the nose)
+  const holdSwarm = (): void => field?.fixHeading(session.pos, session.q, planet);
+  holdSwarm();
   const frame: Frame3 = {
     camPos: camera.pos, camQ: camera.q, ship: { pos: session.pos, q: session.q }, planet, time: session.time, stab: stabParam(),
     swarm: field?.swarm,
@@ -56,6 +60,7 @@ export function fly(page: Page): void {
     else if (a === 'restart') {
       session.restart(controls);
       camera.snap(session.pos, session.q, planet);
+      holdSwarm();
       renderer.resetHistory();
     } else frame.stab = a === 'mode0' ? 0 : a === 'mode1' ? 1 : 2;
     nextReadout = 0;

@@ -5,6 +5,7 @@ import {
 import { type Quat, type Vec3, addScaled, dot, len, norm, qAxisAngle, qFromBasis, qIdentity, qMul, qRotate, sub, v3 } from './math';
 import { pathFocus, pose } from './path';
 import { altitude, makePlanet, surfaceRadius } from './planet';
+import { FlightSession } from './session';
 
 const parse = (query: string) => parseCombat(new URLSearchParams(query));
 
@@ -238,5 +239,136 @@ describe('CombatField (motion)', () => {
     const f = new CombatField({ ships: 0, bolts: 20, particles: 0 }), p = space();
     f.update(2, p.pos, p.q, planet);
     for (let i = 0; i < 20; i++) expect(dist(f.swarm.boltHead, i, p.pos)).toBeGreaterThanOrEqual(NEAR_RANGE - 1e-6);
+  });
+});
+
+describe('CombatField with the heading held (free flight)', () => {
+  const DEG = 180 / Math.PI;
+  const turned = (q: Quat, axis: Vec3, angle: number): Quat => qMul(qIdentity(), q, qAxisAngle(qIdentity(), axis, angle));
+  const TURNS: [Vec3, number][] = [[v3(0, 1, 0), 1.2], [v3(1, 0, 0), -0.8], [v3(0, 0, -1), 2.5], [v3(0, 1, 0), Math.PI]];
+  /** Everything that must not care which way the ship points: all but the player's own shots. */
+  const others = (s: Swarm): number[][] => {
+    const bolts = (a: Float64Array): number[] => Array.from(a).filter((_, i) => !s.boltFriendly[Math.floor(i / 3)]);
+    return [Array.from(s.shipPos), Array.from(s.shipRot), bolts(s.boltHead), bolts(s.boltTail), Array.from(s.partPos), Array.from(s.partAge)];
+  };
+  const held = (p: { pos: Vec3; q: Quat }, counts = HEAVY): CombatField => {
+    const f = new CombatField(counts);
+    f.fixHeading(p.pos, p.q, planet);
+    return f;
+  };
+  const radial = (p: Vec3): Vec3 => norm(v3(), sub(v3(), p, planet.center));
+  /** Each ship seen from the player in a level frame of heading `h`: right, up, ahead. */
+  const level = (f: CombatField, pos: Vec3, h: Vec3): number[][] => {
+    const u = radial(pos), r = v3(h.y * u.z - h.z * u.y, h.z * u.x - h.x * u.z, h.x * u.y - h.y * u.x);
+    return Array.from({ length: f.swarm.ships }, (_, i) => {
+      const d = sub(v3(), at(f.swarm.shipPos, i), pos);
+      return [dot(d, r), dot(d, u), dot(d, h)];
+    });
+  };
+  const sameRows = (a: number[][], b: number[][]): void => {
+    a.forEach((row, i) => row.forEach((v, k) => expect(v, `ship ${i} axis ${k}`).toBeCloseTo(b[i][k], 3)));
+  };
+
+  it('starts as the following swarm does in level flight', () => {
+    const p = space(), a = held(p), b = new CombatField(HEAVY);
+    a.update(6, p.pos, p.q, planet);
+    b.update(6, p.pos, p.q, planet);
+    const x = snapshot(a.swarm), y = snapshot(b.swarm);
+    x[0].forEach((v, i) => expect(v).toBeCloseTo(y[0][i], 4));
+  });
+  it('does not move when the ship turns, pitches or rolls', () => {
+    const p = space(), f = held(p);
+    f.update(6, p.pos, p.q, planet);
+    const before = others(f.swarm);
+    for (const [axis, angle] of TURNS) {
+      f.update(6, p.pos, turned(p.q, axis, angle), planet);
+      expect(others(f.swarm)).toEqual(before);
+    }
+  });
+  it('so a turn carries the enemies across the view, and a half turn leaves most of them behind', () => {
+    const p = space(), f = held(p);
+    const ahead = (q: Quat): number => {
+      f.update(6, p.pos, q, planet);
+      let n = 0;
+      for (let i = 0; i < f.swarm.ships; i++) { const v = local(at(f.swarm.shipPos, i), { pos: p.pos, q }); if (v.z > 0 && Math.abs(v.x) < v.z * 1.1) n++; }
+      return n / f.swarm.ships;
+    };
+    expect(ahead(p.q)).toBeGreaterThan(0.6);
+    expect(ahead(turned(p.q, v3(0, 1, 0), Math.PI))).toBeLessThan(0.2);
+  });
+  it('is level, along the way out of the dive, when flight starts looking straight down', () => {
+    const start = new FlightSession(planet, focus), f = held({ pos: start.pos, q: start.q });
+    const h = qRotate(v3(), start.q, v3(0, 1, 0)), n = radial(start.pos);
+    expect(dot(h, n)).toBeCloseTo(0, 6); // the screen's up at the start lies along the ground
+    f.update(4, start.pos, start.q, planet);
+    const rows = level(f, start.pos, h);
+    for (const [r, u, a] of rows) expect(Math.abs(Math.atan2(u, Math.hypot(r, a)) * DEG)).toBeLessThan(45);
+    expect(rows.filter(([r, , a]) => a > 0 && Math.abs(r) < a * 1.3).length / rows.length).toBeGreaterThan(0.6);
+  });
+  it('goes with the player over the planet, staying level and on its bearing', () => {
+    const p = space(), f = held(p), n = radial(p.pos), h = qRotate(v3(), p.q, v3(0, 0, -1));
+    f.update(6, p.pos, p.q, planet);
+    const first = level(f, p.pos, h);
+    const away = len(sub(v3(), p.pos, planet.center));
+    const side = v3(h.y * n.z - h.z * n.y, h.z * n.x - h.x * n.z, h.x * n.y - h.y * n.x);
+    for (const angle of [0.5, 2]) {
+      // along the heading: the heading tips over with the ground
+      const c = Math.cos(angle), s = Math.sin(angle);
+      const n1 = v3(n.x * c + h.x * s, n.y * c + h.y * s, n.z * c + h.z * s);
+      const h1 = v3(h.x * c - n.x * s, h.y * c - n.y * s, h.z * c - n.z * s);
+      const ahead = addScaled(v3(), planet.center, n1, away);
+      f.update(6, ahead, p.q, planet);
+      sameRows(level(f, ahead, h1), first);
+      // to the side: the heading stays what it was
+      const n2 = v3(n.x * c + side.x * s, n.y * c + side.y * s, n.z * c + side.z * s);
+      const over = addScaled(v3(), planet.center, n2, away);
+      f.update(6, over, p.q, planet);
+      sameRows(level(f, over, h), first);
+    }
+  });
+  it('depends on where the player is, not on the way there', () => {
+    const p = space(), a = held(p), b = held(p);
+    const mid = addScaled(v3(), p.pos, v3(1, 0.3, -0.5), 9000), end = addScaled(v3(), p.pos, v3(-0.4, 1, 0.8), 7000);
+    a.update(6, end, p.q, planet);
+    b.update(6, mid, p.q, planet);
+    b.update(6, end, p.q, planet);
+    expect(others(b.swarm)).toEqual(others(a.swarm));
+  });
+  it('takes a new heading when it is fixed again', () => {
+    const p = space(), other = turned(p.q, v3(0, 1, 0), 2), f = held(p);
+    f.update(6, p.pos, p.q, planet);
+    const first = others(f.swarm);
+    f.fixHeading(p.pos, other, planet);
+    f.update(6, p.pos, p.q, planet);
+    expect(others(f.swarm)).not.toEqual(first);
+    f.fixHeading(p.pos, p.q, planet);
+    f.update(6, p.pos, p.q, planet);
+    expect(others(f.swarm)).toEqual(first);
+  });
+  it('lets the player\'s own shots leave from the ship as it now points', () => {
+    const p = space(), f = held(p), q = turned(turned(p.q, v3(0, 1, 0), 2.2), v3(0, 0, -1), 0.7);
+    let checked = 0;
+    for (const t of [1, 2.5, 4, 7.5]) {
+      f.update(t, p.pos, q, planet);
+      const s = f.swarm;
+      for (let i = 0; i < s.bolts; i += 8) {
+        const d = dist(s.boltHead, i, p.pos);
+        if (d < NEAR_RANGE + 0.01 || d > FAR_RANGE - 0.01) continue; // held at the edge of the range, off its line
+        const head = at(s.boltHead, i), way = norm(v3(), sub(v3(), head, at(s.boltTail, i)));
+        const miss = Math.min(...[-12, 12].map(x => {
+          const m = addScaled(v3(), p.pos, qRotate(v3(), q, v3(x, -2, -(NEAR_RANGE + 2))), 1);
+          const to = sub(v3(), m, head);
+          return len(addScaled(v3(), to, way, -dot(to, way)));
+        }));
+        expect(miss, `bolt ${i} at ${t}`).toBeLessThan(1e-3);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+  });
+  it('stays finite at the far side of the planet', () => {
+    const p = space(), f = held(p);
+    f.update(3, addScaled(v3(), planet.center, radial(p.pos), -len(sub(v3(), p.pos, planet.center))), p.q, planet);
+    for (const a of snapshot(f.swarm)) expect(a.every(Number.isFinite)).toBe(true);
   });
 });

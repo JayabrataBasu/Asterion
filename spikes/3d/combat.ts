@@ -1,10 +1,12 @@
 /** The combat load test without a browser: its URL parameters, and where the other ships, bolts and particles are.
  *
- *  Motion is a pure function of the seed, the time, the player's position and attitude and the planet: nothing is
- *  carried from one frame to the next. Everything is placed in a frame that goes with the player and turns with the
- *  nose (yaw and pitch), and not with the roll except when looking steeply up or down, so that most of it stays
- *  ahead. All arrays are made once; `update` allocates nothing. */
-import { type Quat, type Vec3, qRotate, v3 } from './math';
+ *  Motion is a pure function of the seed, the time, the player's position and attitude and the planet (and of the
+ *  heading, once one is fixed): nothing is carried from one frame to the next. Everything is placed in a frame that
+ *  goes with the player. By default it turns with the nose (yaw and pitch), and not with the roll except when looking
+ *  steeply up or down, so that most of it stays ahead: the reports and the still view use this. After `fixHeading`
+ *  (free flight) it is level over the ground and keeps its bearing, whichever way the ship turns; only the player's
+ *  own bolts still leave from the ship as it points. All arrays are made once; `update` allocates nothing. */
+import { type Quat, type Vec3, addScaled, dot, len, norm, qRotate, sub, v3 } from './math';
 import { type Planet, surfaceRadius } from './planet';
 
 export interface Capacity { ships: number; bolts: number; particles: number }
@@ -109,6 +111,8 @@ const smooth = (a: number, b: number, x: number): number => {
 };
 
 const AXIS_F = v3(0, 0, -1), AXIS_U = v3(0, 1, 0);
+/** Where the player's bolts start: this far to either side, below and ahead. */
+const MUZZLE_SIDE = 12, MUZZLE_DOWN = 2, MUZZLE_AHEAD = NEAR_RANGE + 2;
 
 export class CombatField {
   readonly swarm: Swarm;
@@ -124,7 +128,9 @@ export class CombatField {
   // the player's frame of this update, and scratch
   private readonly f = v3(); private readonly u = v3(); private readonly r = v3(); private readonly up = v3();
   private readonly p = v3(); private readonly dir = v3(); private readonly local = v3(); private readonly vel = v3();
-  private player: Vec3 = v3(); private planet!: Planet;
+  private player: Vec3 = v3(); private playerQ!: Quat; private planet!: Planet;
+  // the fixed heading, if one is: the vertical where it was fixed, and the way along the ground there
+  private held = false; private readonly from = v3(); private readonly heading = v3(); private readonly muzzle = v3();
 
   constructor(counts: Capacity, seed = 1) {
     this.seed = seed;
@@ -164,10 +170,27 @@ export class CombatField {
     }
   }
 
+  /** From now on the frame's heading is the one the ship has here, carried along the ground as the player moves.
+   *  Looking straight down it is the screen's up (the way out of the dive); looking straight up, the screen's down. */
+  fixHeading(playerPos: Vec3, playerQ: Quat, planet: Planet): void {
+    const n = norm(this.from, sub(this.from, playerPos, planet.center));
+    const f = qRotate(v3(), playerQ, AXIS_F), u = qRotate(v3(), playerQ, AXIS_U), steep = dot(f, n);
+    addScaled(f, f, n, -steep);
+    addScaled(u, u, n, -dot(u, n));
+    const h = addScaled(this.heading, f, u, -steep);
+    if (len(h) < 1e-6) { // no way is the nose's: any level one
+      const axis = Math.abs(n.y) < 0.9 ? v3(0, 1, 0) : v3(1, 0, 0);
+      addScaled(h, axis, n, -dot(axis, n));
+    }
+    norm(h, h);
+    this.held = true;
+  }
+
   /** Writes the places at time `t` (seconds) around the player into `swarm`. */
   update(t: number, playerPos: Vec3, playerQ: Quat, planet: Planet): void {
-    this.player = playerPos; this.planet = planet;
-    this.makeFrame(playerQ);
+    this.player = playerPos; this.playerQ = playerQ; this.planet = planet;
+    if (this.held) this.levelFrame();
+    else this.makeFrame(playerQ);
     this.moveShips(t);
     this.moveBolts(t);
     this.moveParticles(t);
@@ -193,6 +216,33 @@ export class CombatField {
     }
     u.x = hx / l; u.y = hy / l; u.z = hz / l;
     r.x = f.y * u.z - f.z * u.y; r.y = f.z * u.x - f.x * u.z; r.z = f.x * u.y - f.y * u.x;
+  }
+
+  /** Up is away from the planet; forward is the fixed heading, turned by the least that takes the vertical where it
+   *  was fixed to the vertical here. */
+  private levelFrame(): void {
+    const { f, u, r, from: a, heading: h } = this, c = this.planet.center, p = this.player;
+    let x = p.x - c.x, y = p.y - c.y, z = p.z - c.z;
+    const d = length(x, y, z) || 1;
+    x /= d; y /= d; z /= d;
+    u.x = x; u.y = y; u.z = z;
+    const across = 1 + a.x * x + a.y * y + a.z * z; // 0 on the far side of the planet, where any way round will do
+    const k = across > 1e-9 ? (h.x * x + h.y * y + h.z * z) / across : 0;
+    let fx = h.x - (a.x + x) * k, fy = h.y - (a.y + y) * k, fz = h.z - (a.z + z) * k;
+    const v = fx * x + fy * y + fz * z; // rounding, and the far side
+    fx -= x * v; fy -= y * v; fz -= z * v;
+    const l = length(fx, fy, fz) || 1;
+    f.x = fx / l; f.y = fy / l; f.z = fz / l;
+    r.x = f.y * u.z - f.z * u.y; r.y = f.z * u.x - f.x * u.z; r.z = f.x * u.y - f.y * u.x;
+  }
+
+  /** `p` = where a bolt of the player's starts, at the wing tip on `side` (-1 or 1). */
+  private placeMuzzle(side: number): void {
+    if (!this.held) { this.place(side * MUZZLE_SIDE, -MUZZLE_DOWN, MUZZLE_AHEAD); return; }
+    const { p, muzzle: m } = this, o = this.player;
+    m.x = side * MUZZLE_SIDE; m.y = -MUZZLE_DOWN; m.z = -MUZZLE_AHEAD; // the ship's own axes: its nose is -Z
+    qRotate(p, this.playerQ, m);
+    p.x += o.x; p.y += o.y; p.z += o.z;
   }
 
   /** `p` = the world point at (x right, y up, z ahead) from the player. */
@@ -308,7 +358,7 @@ export class CombatField {
       let ox = a[from * 3], oy = a[from * 3 + 1], oz = a[from * 3 + 2];
       let tx = a[to * 3], ty = a[to * 3 + 1], tz = a[to * 3 + 2];
       if (mine) { // from just ahead of a wing tip
-        this.place(hash(id, k, 3) < 0.5 ? -12 : 12, -2, NEAR_RANGE + 2);
+        this.placeMuzzle(hash(id, k, 3) < 0.5 ? -1 : 1);
         ox = p.x; oy = p.y; oz = p.z;
       } else if (hash(id, k, 4) < AT_PLAYER) { // past the player
         this.place((hash(id, k, 5) - 0.5) * 60, (hash(id, k, 6) - 0.5) * 36, NEAR_RANGE + 4 + 20 * hash(id, k, 7));

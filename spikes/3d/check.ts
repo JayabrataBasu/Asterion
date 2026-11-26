@@ -2,7 +2,9 @@
  *  fully behind an occluder and then the same ones in front of it, on the same cells, and compares the finished
  *  screen, pixel by pixel and character by character, with the picture without them. Behind: nothing may change.
  *  In front: every cell they were placed on must show them. Control: behind, with the characters' occlusion switched
- *  off, they show (so they were on screen). The counts the reports give are checked on the way.
+ *  off, they show (so they were on screen). The planet's edge, seen from space, has its own cases: bolts and
+ *  particles all equally far behind the planet, on cells just inside its disk (hidden) and just outside (shown).
+ *  The counts the reports give are checked on the way.
  *  The result is shown as text and logged; the title becomes 'done'. */
 import { CHARSET, gi } from '../../src/gfx/atlas';
 import { ChaseCamera } from './camera';
@@ -68,6 +70,27 @@ export function runCheck(page: Page): void {
     while (t < 20000 && !under(t)) t += 2;
     if (t >= 20000) throw new Error(`cell ${x},${y} does not meet the ground`);
     return t / len(r);
+  }
+
+  /** Whether the ray through a point of the screen, in cells (column, row from the bottom), meets the ground. */
+  function meetsGround(x: number, y: number): boolean {
+    const d = norm(v3(), qRotate(v3(), frame.camQ, ray(x - 0.5, y - 0.5))), p = v3();
+    sub(p, planet.center, frame.camPos);
+    const along = dot(p, d), miss2 = dot(p, p) - along * along, top = planet.radius + planet.relief;
+    if (miss2 >= top * top) return false;
+    const half = Math.sqrt(top * top - miss2);
+    for (let t = along - half; t <= along + half; t += 4) {
+      sub(p, addScaled(p, frame.camPos, d, t), planet.center);
+      const dist = len(p);
+      if (dist < surfaceRadius(planet, norm(p, p))) return true;
+    }
+    return false;
+  }
+  /** 'in': the whole cell is on the planet's disk; 'out': the whole cell is sky; 'edge': neither. */
+  function side(x: number, y: number): 'in' | 'out' | 'edge' {
+    let hits = 0;
+    for (const [i, j] of [[0, 0], [1, 0], [0, 1], [1, 1], [0.5, 0.5]]) if (meetsGround(x + i, y + j)) hits++;
+    return hits === 5 ? 'in' : hits === 0 ? 'out' : 'edge';
   }
 
   // ------------------------------------------------------------------ pictures
@@ -182,6 +205,33 @@ export function runCheck(page: Page): void {
     verdict(hidden && visible && controlled, text);
   }
 
+  /** Objects equally far behind the planet on both sides of its edge: those on its disk must change nothing (and
+   *  show with the characters' occlusion off), those just off it must show. `apart`: for each pair, the cells between
+   *  the one inside and the one outside. */
+  function limbTest(kind: 'particles' | 'bolts', inside: Spot[], outside: Spot[], apart: number[]): void {
+    const title = `at the planet's edge, ${inside.length} ${kind} a side`.padEnd(40);
+    if (inside.length === 0 || outside.length !== inside.length) { verdict(false, `${title} no cells found to test`); return; }
+    const none = newSwarm({ ships: 0, bolts: 0, particles: 0 });
+    const placed = (spots: Spot[]): Shot => shot(place(kind, spots, 'behind', none));
+    const shown = (s: Shot, spots: Spot[]): number => spots.flatMap(p => expected(kind, p))
+      .filter(([x, y, c]) => s.glyphs[(rows - 1 - y) * cols + x] === gi(c)).length;
+    const total = inside.flatMap(p => expected(kind, p)).length;
+    const without = shot(none);
+    const again = difference(without, shot(none));
+    if (again.pixels || again.glyphs) { verdict(false, `${title} the picture is not repeatable: ${again.pixels} pixels differ`); return; }
+
+    const within = placed(inside), d = difference(without, within), ci = within.counts[kind];
+    const beyond = placed(outside), co = beyond.counts[kind], seen = shown(beyond, outside);
+    renderer.swarmOcclude = false;
+    const off = shown(placed(inside), inside);
+    renderer.swarmOcclude = true;
+    const ok = d.pixels === 0 && d.glyphs === 0 && ci.drawn === 0 && ci.hidden === inside.length &&
+      co.drawn === outside.length && seen === total && off === total;
+    verdict(ok, `${title} inside: ${d.pixels} pixels, ${d.glyphs} characters changed (${show(ci)}) | ` +
+      `outside, as far back: ${seen}/${total} placed cells show it (${show(co)}) | control, inside, occlusion off: ${off}/${total}` +
+      ` | ${Math.min(...apart)} to ${Math.max(...apart)} cells between the two`);
+  }
+
   /** Spots on a grid of cells. */
   function grid(xs: number[], ys: number[], make: (x: number, y: number) => Omit<Spot, 'x' | 'y'>): Spot[] {
     return ys.flatMap(y => xs.map(x => ({ x, y, ...make(x, y) })));
@@ -199,6 +249,51 @@ export function runCheck(page: Page): void {
     test('behind the planet', 'particles', spots);
     test('behind the planet', 'bolts', spots);
     test('behind the planet', 'markers', spots, undefined, false);
+    limbParticles(depths);
+    limbBolts(depths);
+  }
+
+  /** Walks outward from the middle of the disk in 24 directions: the last cell wholly on it, the first wholly off. */
+  function limbParticles(depths: () => Omit<Spot, 'x' | 'y'>): void {
+    const inside: Spot[] = [], outside: Spot[] = [], apart: number[] = [];
+    for (let k = 0; k < 24; k++) {
+      const a = (k + 0.5) / 24 * 2 * Math.PI;
+      let last: [number, number] | null = null;
+      for (let r = 0; ; r += 0.25) { // in rows; a row is two columns tall
+        const x = Math.floor(cols / 2 + 2 * r * Math.cos(a)), y = Math.floor(rows / 2 + r * Math.sin(a));
+        if (x < 0 || x >= cols || y < 0 || y >= rows) break;
+        const s = side(x, y);
+        if (s === 'in') last = [x, y];
+        if (s !== 'out' || !last) continue;
+        inside.push({ x: last[0], y: last[1], ...depths(), run: 1 });
+        outside.push({ x, y, ...depths(), run: 1 });
+        apart.push(Math.max(Math.abs(x - last[0]), Math.abs(y - last[1])) - 1);
+        break;
+      }
+    }
+    limbTest('particles', inside, outside, apart);
+  }
+
+  /** Level bolts across the left and right edges: each ends (or starts) at the last cell of its row wholly on the disk,
+   *  its partner at the first wholly off it. */
+  function limbBolts(depths: () => Omit<Spot, 'x' | 'y'>): void {
+    const inside: Spot[] = [], outside: Spot[] = [], apart: number[] = [];
+    const run = depths().run;
+    for (const y of around(rows >> 1, 3, 3)) {
+      for (const way of [-1, 1]) {
+        let x = cols >> 1, last = x;
+        for (; x >= 0 && x < cols; x += way) {
+          const s = side(x, y);
+          if (s === 'in') last = x;
+          if (s === 'out') break;
+        }
+        if (x < 0 || x >= cols) continue;
+        inside.push({ y, ...depths(), x: way > 0 ? last - run + 1 : last });
+        outside.push({ y, ...depths(), x: way > 0 ? x : x - run + 1 });
+        apart.push(Math.abs(x - last) - 1);
+      }
+    }
+    limbTest('bolts', inside, outside, apart);
   }
 
   async function terrain(): Promise<void> {
