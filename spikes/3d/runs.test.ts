@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { DT } from '../../src/sim/sim';
 import { ChaseCamera, MIN_ALT } from './camera';
-import { type Quat, type Vec3, qRotate, v3 } from './math';
+import { type Quat, type Vec3, len, qRotate, v3 } from './math';
 import { pose } from './path';
 import { altitude, makePlanet } from './planet';
 import type { Frame3 } from './render';
 import { type ReportWindow, reportWindows } from './report';
 import { newSwarm } from './combat';
+import { makeScene } from './scene';
+import { makeWorld } from './world';
 import type { SwarmCounts } from './combatDraw';
 import { COUNT_EVERY, FlickerRun, LATE_FRAMES, PerfRun, type ReportRenderer, type SwarmSource } from './runs';
 
@@ -237,5 +239,29 @@ describe('reports with a swarm (combat load test)', () => {
     expect(r.counted).toEqual([]);
     expect(run.counts).toBeNull();
     expect(run.data().swarm).toBeUndefined();
+  });
+});
+
+describe('a report in a world scene', () => {
+  const scene = makeScene(makeWorld('gas')), p = scene.world.planet;
+
+  it('flies the scene\'s own path', () => {
+    const r = new Fake(), windows = reportWindows('0.1', 0).slice(2, 3).map(w => ({ ...w, mode: 2 as const }));
+    const run = new FlickerRun(r, p, windows, undefined, scene);
+    while (run.tick()) { /* all of it */ }
+    const last = r.frames[r.frames.length - 1];
+    expect(last.ship!.pos).toEqual(scene.pose(last.time).shipPos);
+    expect(len(last.ship!.pos)).toBeLessThan(p.radius + 200);
+    expect(last.planet).toBe(p);
+  });
+
+  it('times the scene\'s own path too', () => {
+    const r = new Fake(), windows = reportWindows('0.1', 2);
+    let at = 0;
+    const run = new PerfRun(r, p, windows, () => at += 0.5, undefined, scene);
+    while (run.tick()) run.end(16.7, 2);
+    expect(run.data().frames).toBe(24);
+    const last = r.frames[r.frames.length - 1];
+    expect(last.ship!.pos).toEqual(scene.pose(last.time).shipPos);
   });
 });

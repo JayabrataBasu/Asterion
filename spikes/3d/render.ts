@@ -15,12 +15,14 @@ import { type Quat, type Vec3, add, len, qRotate, scale, sub, v3, viewProj } fro
 import { type Mesh, rockMesh, wrenMesh } from './meshes';
 import { type Planet, atmoDensity } from './planet';
 import { SCALE } from './scale';
+import { type Loc, RESOLVE_UNIFORMS, type SceneFrame, type SceneLayer, makeSceneLayer } from './sceneLayer';
 import * as S from './shaders';
 import {
   TILE_N, type TileId, type TileMesh, buildTile, faceDir, finestDepth, resolveDrawList, selectTiles, tileIndices, tileKey,
 } from './tiles';
 import { FrameTimer, type QueryApi, shownGpuMs } from './timing';
 import type { TileReply, TileRequest } from './worker';
+import type { World } from './world';
 
 export interface Frame3 {
   camPos: Vec3; camQ: Quat;
@@ -111,7 +113,6 @@ export function keepsHistory(prev: HistoryKey | null, now: HistoryKey): boolean 
 
 // ------------------------------------------------------------------ renderer
 
-type Loc = Record<string, WebGLUniformLocation | null>;
 interface Target { tex: WebGLTexture; fbo: WebGLFramebuffer; w: number; h: number }
 interface Tile { id: TileId; key: number; slot: number; center: Vec3; radius: number; spacing: number; last: number }
 interface Rock { pos: Vec3; size: number; q: Quat; kind: number }
@@ -146,6 +147,8 @@ export class Renderer3 {
   private readonly swarmLayer: SwarmLayer | null;
   /** The layer, if the last frame had a swarm. */
   private shown: SwarmLayer | null = null;
+  /** The world scene's own drawing; null for the default planet. */
+  private readonly scene: SceneLayer | null;
 
   private readonly sync: boolean;
   private hdr = false;
@@ -210,8 +213,9 @@ export class Renderer3 {
 
   private timerExt: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null = null;
 
-  /** `swarm`: the most other ships, bolts and particles a frame will bring (none: no swarm is drawn). */
-  constructor(readonly canvas: HTMLCanvasElement, opts: { sync: boolean; swarm?: Capacity | null }) {
+  /** `swarm`: the most other ships, bolts and particles a frame will bring (none: no swarm is drawn). `world`: the
+   *  world scene, if the page shows one. */
+  constructor(readonly canvas: HTMLCanvasElement, opts: { sync: boolean; swarm?: Capacity | null; world?: World | null }) {
     this.sync = opts.sync;
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 not available');
@@ -227,7 +231,7 @@ export class Renderer3 {
     this.pHalo = this.prog(VS_FULLSCREEN, S.FS_HALO);
     const world = ['uVP', 'uOff', 'uPlanet', 'uR', 'uFC', 'uSpacing', 'uCellK', 'uRelief'];
     this.uTile = this.locs(this.pTile, world); this.uRock = this.locs(this.pRock, world);
-    this.uResolve = this.locs(this.pResolve, ['uCol', 'uDep', 'uCells', 'uCamRot', 'uTan', 'uEye', 'uR', 'uAtmo', 'uTime', 'uSunK', 'uG', 'uFC', 'uDebug', 'uPrev', 'uDither', 'uHold']);
+    this.uResolve = this.locs(this.pResolve, RESOLVE_UNIFORMS);
     this.uShip = this.locs(this.pShip, ['uVP', 'uRot', 'uOff', 'uFC', 'uDep', 'uSky']);
     this.uMatch = this.locs(this.pMatch, ['uSpr', 'uSig', 'uCand', 'uNC', 'uFill']);
     this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers', 'uQZ', 'uQN', 'uWorldCell', 'uHalo']);
@@ -238,6 +242,8 @@ export class Renderer3 {
     this.uHalo = this.locs(this.pHalo, ['uMA', 'uCells']);
     this.vaoEmpty = gl.createVertexArray()!;
     this.swarmLayer = opts.swarm ? new SwarmLayer(gl, opts.swarm, (vs, fs) => this.prog(vs, fs)) : null;
+    this.scene = opts.world
+      ? makeSceneLayer(opts.world, { gl, prog: (vs, fs) => this.prog(vs, fs), locs: (p, names) => this.locs(p, names) }) : null;
 
     // planet tiles: one big buffer per attribute, one slot per cached tile, one VAO per slot (all made here, once)
     const idx = tileIndices(); this.nIdx = idx.length;
@@ -578,6 +584,9 @@ export class Renderer3 {
 
   /** True once every wanted tile is drawn at its own detail and nothing is being built. */
   get settled(): boolean {
+    const scene = this.scene;
+    if (scene && !scene.settled) return false;
+    if (scene && !scene.planetTiles) return true;
     return this.wantedKeys.length > 0 && this.stats.pending === 0 && this.wantedKeys.every(k => this.cache.has(k));
   }
 
@@ -613,8 +622,9 @@ export class Renderer3 {
     this.frameNo++;
     this.timerBegin();
     this.refreshAtlas();
-    this.updateTiles(f);
-    this.placeRocks(p);
+    const scene = this.scene;
+    if (!scene || scene.planetTiles) this.updateTiles(f);
+    if (!scene) this.placeRocks(p); // the default planet's scenery
 
     const { cols, rows } = this;
     const aspect = cols / (rows * 2), tanY = Math.tan(FOV_Y / 2);
@@ -655,26 +665,31 @@ export class Renderer3 {
     }
     let tris = tiles * this.nIdx / 3;
 
-    // rocks: cull on the processor, then one instanced draw per shape
-    this.rockCount.fill(0);
-    for (const r of this.rocks) {
-      sub(this.rel, r.pos, f.camPos);
-      const br = r.size * 1.6;
-      if (beyondHorizon(this.rel, br, this.planetRel, p.radius)) continue;
-      if (!inView(qRotate(this.view, this.invQ, this.rel), br, tanY, aspect, NEAR)) continue;
-      const o = (r.kind * ROCKS + this.rockCount[r.kind]++) * 8, d = this.rockData;
-      d[o] = this.rel.x; d[o + 1] = this.rel.y; d[o + 2] = this.rel.z; d[o + 3] = r.size;
-      d[o + 4] = r.q.x; d[o + 5] = r.q.y; d[o + 6] = r.q.z; d[o + 7] = r.q.w;
-    }
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.rockInst); gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.rockData);
-    gl.useProgram(this.pRock); u = this.uRock;
-    gl.uniformMatrix4fv(u.uVP, false, this.vp); gl.uniform1f(u.uFC, fc); gl.uniform1f(u.uCellK, cellK);
-    gl.uniform1f(u.uSpacing, 1.5); gl.uniform1f(u.uR, p.radius); gl.uniform1f(u.uRelief, p.relief);
-    for (let k = 0; k < ROCK_KINDS; k++) {
-      if (this.rockCount[k] === 0) continue;
-      gl.bindVertexArray(this.rockVao[k]);
-      gl.drawArraysInstanced(gl.TRIANGLES, 0, this.rockVerts[k], this.rockCount[k]);
-      tris += this.rockVerts[k] / 3 * this.rockCount[k];
+    if (!scene) {
+      // rocks: cull on the processor, then one instanced draw per shape
+      this.rockCount.fill(0);
+      for (const r of this.rocks) {
+        sub(this.rel, r.pos, f.camPos);
+        const br = r.size * 1.6;
+        if (beyondHorizon(this.rel, br, this.planetRel, p.radius)) continue;
+        if (!inView(qRotate(this.view, this.invQ, this.rel), br, tanY, aspect, NEAR)) continue;
+        const o = (r.kind * ROCKS + this.rockCount[r.kind]++) * 8, d = this.rockData;
+        d[o] = this.rel.x; d[o + 1] = this.rel.y; d[o + 2] = this.rel.z; d[o + 3] = r.size;
+        d[o + 4] = r.q.x; d[o + 5] = r.q.y; d[o + 6] = r.q.z; d[o + 7] = r.q.w;
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.rockInst); gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.rockData);
+      gl.useProgram(this.pRock); u = this.uRock;
+      gl.uniformMatrix4fv(u.uVP, false, this.vp); gl.uniform1f(u.uFC, fc); gl.uniform1f(u.uCellK, cellK);
+      gl.uniform1f(u.uSpacing, 1.5); gl.uniform1f(u.uR, p.radius); gl.uniform1f(u.uRelief, p.relief);
+      for (let k = 0; k < ROCK_KINDS; k++) {
+        if (this.rockCount[k] === 0) continue;
+        gl.bindVertexArray(this.rockVao[k]);
+        gl.drawArraysInstanced(gl.TRIANGLES, 0, this.rockVerts[k], this.rockCount[k]);
+        tris += this.rockVerts[k] / 3 * this.rockCount[k];
+      }
+    } else {
+      tris += scene.draw(this.sceneFrame(f, tanY, aspect, fc, cellK));
+      this.stats.pending = (scene.planetTiles ? this.stats.pending : 0) + scene.pending;
     }
 
     // ---- pass 2: resolve, one pixel per cell
@@ -683,11 +698,12 @@ export class Renderer3 {
     const hold = this.stepHistory(f);
     this.bandNow = 1 - this.bandNow;
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.resolveFbo[this.bandNow]); gl.viewport(0, 0, cols, rows);
-    gl.useProgram(this.pResolve); gl.bindVertexArray(this.vaoEmpty);
+    const own = scene?.resolve;
+    gl.useProgram(own ? own.program : this.pResolve); gl.bindVertexArray(this.vaoEmpty);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.worldCol);
     gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.worldDep);
     gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, this.bandState[1 - this.bandNow]);
-    u = this.uResolve;
+    u = own ? own.u : this.uResolve;
     gl.uniform1i(u.uCol, 3); gl.uniform1i(u.uDep, 6); gl.uniform1i(u.uPrev, 8);
     gl.uniform1f(u.uDither, f.stab === 0 ? DITHER : 0); gl.uniform1f(u.uHold, f.stab === 2 && hold ? HOLD : 0);
     gl.uniform2i(u.uCells, cols, rows);
@@ -700,6 +716,7 @@ export class Renderer3 {
     gl.uniform3f(u.uEye, -this.planetRel.x, -this.planetRel.y, -this.planetRel.z);
     gl.uniform1f(u.uR, p.radius); gl.uniform1f(u.uAtmo, p.atmo); gl.uniform1f(u.uTime, f.time);
     gl.uniform1f(u.uSunK, st.sun); gl.uniform1fv(u.uG, this.G); gl.uniform1f(u.uFC, fc); gl.uniform1i(u.uDebug, this.debug);
+    if (own) scene!.resolveUniforms(this.sceneFrame(f, tanY, aspect, fc, cellK));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // ---- pass 3: ships at 4x8 samples per cell, behind-world fragments dropped; then glyph matching
@@ -848,6 +865,15 @@ export class Renderer3 {
     gl.readPixels(0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, this.readBuf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindVertexArray(null);
     for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) out[(rows - 1 - y) * cols + x] = this.readBuf[(y * cols + x) * 4];
+  }
+
+  // ------------------------------------------------------------------ world scene
+  private readonly forScene = { vp: this.vp, invQ: this.invQ, planetRel: this.planetRel } as SceneFrame;
+  private sceneFrame(f: Frame3, tanY: number, aspect: number, fc: number, cellK: number): SceneFrame {
+    const s = this.forScene;
+    s.camPos = f.camPos; s.camQ = f.camQ; s.planet = f.planet; s.time = f.time; s.cols = this.cols; s.rows = this.rows;
+    s.tanY = tanY; s.aspect = aspect; s.fc = fc; s.cellK = cellK;
+    return s;
   }
 
   // ------------------------------------------------------------------ swarm

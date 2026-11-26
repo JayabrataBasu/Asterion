@@ -1,11 +1,11 @@
 /** A still picture: ?pose=<seconds> shows that moment of the scripted path (0..60, default 0). &ship=0 hides the ship,
  *  &dump=1 logs the characters as text, &measure=1 times 300 frames once the tiles have settled. The title becomes
- *  'ready' once every wanted tile is drawn. */
+ *  'ready' once every wanted tile is drawn. In a world scene, &look=<name> shows one of its viewpoints instead. */
 import { CHARSET } from '../../src/gfx/atlas';
 import { sceneLine } from './combat';
 import { modeLabel } from './controls';
 import { type Page, params, stabParam } from './page';
-import { PATH_SECONDS, pathFocus, pose } from './path';
+import { PATH_SECONDS } from './path';
 import { altitude } from './planet';
 import { FOV_Y, type Frame3 } from './render';
 import { Measure } from './timing';
@@ -13,13 +13,13 @@ import { Measure } from './timing';
 const MEASURE_FRAMES = 300, LATE_FRAMES = 30; // graphics results arrive a few frames late
 
 export function showStill(page: Page): void {
-  const { renderer, planet, info, gpuName, sync, combat, field } = page;
+  const { renderer, planet, info, gpuName, sync, combat, field, scene } = page;
   const seconds = Math.min(PATH_SECONDS, Math.max(0, Number(params.get('pose')) || 0));
   const stab = stabParam();
   const measure = params.get('measure') === '1';
   const showShip = params.get('ship') !== '0'; // ship=0 hides the ship, to look at the ground
-  const view = pose(seconds, planet);
-  renderer.rockDir = pathFocus(planet);
+  const view = scene.view(params.get('look') ?? '') ?? scene.pose(seconds);
+  renderer.rockDir = scene.focus;
 
   const frame: Frame3 = {
     camPos: view.camPos, camQ: view.camQ, ship: showShip ? { pos: view.shipPos, q: view.shipQ } : null, planet,

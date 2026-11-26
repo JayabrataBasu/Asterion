@@ -23,12 +23,16 @@
   #report{font-size:13px;line-height:1.4;user-select:text}
   #reportHint{margin-top:10px;color:#ffd75f;white-space:pre-wrap}
   /* at the top, so that a finished report stays readable under it */
+  #warn{position:fixed;left:50%;top:18%;transform:translateX(-50%);font:bold 20px monospace;color:#ff6a4a;white-space:pre;
+        text-shadow:0 0 4px #000,0 0 4px #000;pointer-events:none;z-index:2}
+  #warn:empty{display:none}
   #lost{top:8px;transform:translateX(-50%);z-index:4;font:15px/1.4 monospace;color:#fb6;white-space:pre}
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <pre id="info"></pre>
+<div id="warn" role="status"></div>
 <div id="centre" hidden>&middot;</div>
 <div id="reticle" hidden>+</div>
 <div id="help" class="panel" hidden><pre>ASTERION 3D spike: paused

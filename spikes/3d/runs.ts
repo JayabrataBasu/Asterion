@@ -9,6 +9,7 @@ import { FlickerTally } from './metrics';
 import { type PathPose, pose } from './path';
 import type { Planet } from './planet';
 import type { Frame3 } from './render';
+import type { Scene } from './scene';
 import { type FlickerRow, PathRun, type PathStep, type PerfData, type ReportWindow } from './report';
 import { Measure, nearestRank, timerStepMs } from './timing';
 
@@ -71,6 +72,11 @@ class ReportCamera {
   }
 }
 
+/** The path of the page: the world scene's own, or the default planet's. */
+function poseAt(scene: Scene | undefined, t: number, planet: Planet): PathPose {
+  return scene ? scene.pose(t) : pose(t, planet);
+}
+
 /** Flicker: every window is drawn afresh (no band history carried in) and its measured frames are read back. */
 export class FlickerRun {
   readonly rows: FlickerRow[] = [];
@@ -83,7 +89,7 @@ export class FlickerRun {
   private readonly sum = new CountSum();
 
   constructor(private readonly r: ReportRenderer, planet: Planet, readonly windows: readonly ReportWindow[],
-    private readonly field?: SwarmSource) {
+    private readonly field?: SwarmSource, private readonly scene?: Scene) {
     this.path = new PathRun(windows, true);
     this.frame = newFrame(planet);
   }
@@ -100,7 +106,7 @@ export class FlickerRun {
     this.at = step;
     const win = this.windows[step.window];
     if (step.fresh) { this.r.resetHistory(); this.tally = new FlickerTally(this.r.cols * this.r.rows); }
-    const p = pose(step.t, this.frame.planet);
+    const p = poseAt(this.scene, step.t, this.frame.planet);
     this.camera.place(this.frame, p, step);
     if (this.field) {
       this.field.update(step.t, p.shipPos, p.shipQ, this.frame.planet);
@@ -144,7 +150,7 @@ export class PerfRun {
   private tilesPeak = 0; private trisPeak = 0; private pendingPeak = 0;
 
   constructor(private readonly r: ReportRenderer, private readonly planet: Planet, readonly windows: readonly ReportWindow[],
-    private readonly now: () => number, private readonly field?: SwarmSource) {
+    private readonly now: () => number, private readonly field?: SwarmSource, private readonly scene?: Scene) {
     this.path = new PathRun(windows, false);
     this.frame = newFrame(planet);
     this.measure = new Measure(windows.reduce((n, w) => n + w.frames, 0));
@@ -177,7 +183,7 @@ export class PerfRun {
     if (step.fresh) this.r.resetHistory();
 
     const t0 = this.now();
-    const p = pose(step.t, this.planet);
+    const p = poseAt(this.scene, step.t, this.planet);
     const poseMs = this.now() - t0;
     this.camera.place(this.frame, p, step);
     const motionMs = this.moveSwarm(step.t, p);
@@ -222,7 +228,7 @@ export class PerfRun {
     this.at = step;
     this.frame.stab = this.windows[step.window].mode;
     if (step.fresh) this.r.resetHistory();
-    const p = pose(step.t, this.planet);
+    const p = poseAt(this.scene, step.t, this.planet);
     this.camera.place(this.frame, p, step);
     this.moveSwarm(step.t, p);
     this.r.render(this.frame);

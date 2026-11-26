@@ -3,7 +3,6 @@
  *  shown as text (C copies it) and logged; the title becomes 'done'. A change of window size starts the run again. */
 import { modeLabel } from './controls';
 import { type Page, element, params, stabParam } from './page';
-import { pathFocus } from './path';
 import { type ReportWindow, type RunInfo, formatFlicker, formatPerf, reportWindows } from './report';
 import { FlickerRun, PerfRun } from './runs';
 import { SCALE } from './scale';
@@ -13,8 +12,9 @@ const SLICE_MS = 25;
 const PROGRESS_MS = 1000;
 
 export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
-  const { renderer, planet, info, sync, combat } = page, field = page.field ?? undefined;
-  renderer.rockDir = pathFocus(planet);
+  const { renderer, planet, info, sync, combat, scene } = page, field = page.field ?? undefined;
+  renderer.rockDir = scene.focus;
+  const world = scene.world.scene ?? undefined, own = world ? scene : undefined;
   const secs = params.get('secs');
   const windows: ReportWindow[] = kind === 'perf'
     ? reportWindows(secs, stabParam())
@@ -24,10 +24,10 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
   let resized = 0, hidden = 0, wasHidden = false, prevNow = 0, nextProgress = 0, text = '';
   const start = (): void => {
     if (kind === 'perf') {
-      const run = new PerfRun(renderer, planet, windows, () => performance.now(), field);
+      const run = new PerfRun(renderer, planet, windows, () => performance.now(), field, own);
       perf = run;
       renderer.onGpu = (f, ms) => run.gpu(f, ms);
-    } else flicker = new FlickerRun(renderer, planet, windows, field);
+    } else flicker = new FlickerRun(renderer, planet, windows, field, own);
     nextProgress = 0;
   };
   if (kind === 'perf') {
@@ -58,7 +58,7 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
       browser: navigator.userAgent, gpu: page.gpuName, W: renderer.W, H: renderer.H, cssW: innerWidth, cssH: innerHeight,
       dpr: window.devicePixelRatio, cols: renderer.cols, rows: renderer.rows,
       scale: Object.entries(SCALE).map(([k, v]) => `${k} ${v}`).join('  '),
-      sync, notes,
+      sync, notes, world,
       swarm: combat && run.counts ? { ...combat, ...run.counts } : undefined,
     };
     text = perf ? formatPerf(about, perf.data()) : formatFlicker(about, flicker!.rows);

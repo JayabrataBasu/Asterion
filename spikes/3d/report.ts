@@ -72,6 +72,8 @@ export interface RunInfo {
   scale: string; notes: string[];
   /** Tiles were built on the main thread, not by the workers. */
   sync: boolean;
+  /** The world scene, if the page shows one. */
+  world?: string;
   /** The combat load test's scene and what of it showed; absent without one. */
   swarm?: SwarmReport;
 }
@@ -111,6 +113,7 @@ function head(title: string, i: RunInfo): string[] {
     row('canvas', `${i.W}x${i.H} (window ${i.cssW}x${i.cssH} at scale ${+i.dpr.toFixed(3)})`),
     row('character grid', `${i.cols}x${i.rows} (${i.cols * i.rows} cells)`),
     row('scale', i.scale),
+    ...(i.world ? [row('world scene', i.world)] : []),
   ];
 }
 

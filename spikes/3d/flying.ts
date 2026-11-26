@@ -5,9 +5,9 @@ import { sceneLine } from './combat';
 import { type Action, Controls, isGameKey, modeLabel } from './controls';
 import { len } from './math';
 import { type Page, element, stabParam } from './page';
-import { pathFocus } from './path';
 import type { Frame3 } from './render';
 import { FlightSession } from './session';
+import { sceneStatus } from './status';
 
 const READOUT_MS = 250;
 /** The reticle circle's radius on screen, as a share of the window's shorter side. */
@@ -15,9 +15,10 @@ const RETICLE_SCREEN = 0.25;
 const REFUSED = 'The browser did not capture the mouse. Click again.\n(Just after Esc it refuses for about a second.)';
 
 export function fly(page: Page): void {
-  const { canvas, renderer, planet, info, combat, field } = page;
+  const { canvas, renderer, planet, info, combat, field, scene } = page;
+  const world = scene.world, warn = element('warn');
   const help = element('help'), note = element('note'), reticle = element('reticle'), centre = element('centre');
-  const focus = pathFocus(planet);
+  const focus = scene.focus;
   renderer.rockDir = focus;
   const controls = new Controls(), session = new FlightSession(planet, focus), camera = new ChaseCamera();
   camera.snap(session.pos, session.q, planet);
@@ -86,6 +87,8 @@ export function fly(page: Page): void {
       since = now; frames = 0; busy = 0; worst = 0;
     }
     const st = renderer.stats, s = session.ship;
+    const status = sceneStatus(world, s, session.time);
+    if (warn.textContent !== status.warning) warn.textContent = status.warning;
     const gpu = !renderer.hasTimer ? 'n/a' : st.gpuMs > 0 ? `${st.gpuMs.toFixed(2)} ms` : '--';
     info.textContent =
       `${figures}   graphics ${gpu}\n` +
@@ -94,6 +97,7 @@ export function fly(page: Page): void {
       `mode ${modeLabel(frame.stab)}   level ${s.level ? 'on' : 'off'}\n` +
       `cruise ${s.cruising ? 'ON' : 'off'}${controls.paused ? '   PAUSED' : ''}   P hides this` +
       (combat ? '\n' + sceneLine(combat) : '') +
+      (status.line ? '\n' + status.line : '') +
       (renderer.profile ? '\npasses ms: ' + renderer.passNames.map((n, i) => `${n} ${renderer.passMs[i].toFixed(2)}`).join('  ') : '');
   }
 

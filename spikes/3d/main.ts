@@ -2,7 +2,9 @@
  *  ?auto=perf or ?auto=flicker: a report (auto.ts). For all of them: ?stab=0|1|2 (default 2), &sync=1 builds tiles on
  *  the main thread (the flicker report does so unless sync=0), &profile=1 times each graphics pass, &dbg=1 shows world
  *  cover, and the scale constants of scale.ts. For all of them too, the combat load test (combat.ts):
- *  &scene=combat|heavy, &ships= &bolts= &particles=. ?check=occlusion: the occlusion check (check.ts). */
+ *  &scene=combat|heavy, &ships= &bolts= &particles=. For all of them too, the world scenes (world.ts): &scene=gas, and
+ *  &look=<name> for a still of one of the scene's viewpoints.
+ *  ?check=occlusion: the occlusion check (check.ts). */
 import { runReport } from './auto';
 import { CHECK_ROOM, runCheck } from './check';
 import { fly } from './flying';
@@ -17,7 +19,7 @@ try {
   const page = openPage(sync || check, check ? CHECK_ROOM : undefined);
   if (check) runCheck(page);
   else if (auto === 'perf' || auto === 'flicker') runReport(page, auto);
-  else if (params.has('pose') || params.get('measure') === '1' || params.get('dump') === '1') showStill(page);
+  else if (params.has('pose') || params.has('look') || params.get('measure') === '1' || params.get('dump') === '1') showStill(page);
   else fly(page);
 } catch (e) {
   document.getElementById('info')!.textContent = `The prototype could not start: ${e instanceof Error ? e.message : e}`;

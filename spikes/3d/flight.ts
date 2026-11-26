@@ -2,6 +2,7 @@
 import { clamp } from '../../src/core/util';
 import { FLIGHT, WREN } from '../../src/sim/ships';
 import { DT } from '../../src/sim/sim';
+import { CRUSH_TICK, crushRadius, cloudAltitude, cruiseDatum } from './gas';
 import {
   type Quat, type Vec3, addScaled, copy, dot, len, norm, qAxisAngle, qIdentity, qMul, qNorm, qRotate, scale, sub, v3,
 } from './math';
@@ -32,6 +33,8 @@ export interface Input {
 export interface ShipState {
   pos: Vec3; prevPos: Vec3; q: Quat; prevQ: Quat; vel: Vec3;
   boostE: number; cruising: boolean; level: boolean; hits: number;
+  /** Seconds spent below a gas giant's crush depth, and the hull damage counted for them. */
+  crushTime: number; crushDamage: number;
   /** Height above the surface after the last step. */
   alt: number;
 }
@@ -40,7 +43,7 @@ export interface ShipState {
 export function newShip(): ShipState {
   return {
     pos: v3(), prevPos: v3(), q: qIdentity(), prevQ: qIdentity(), vel: v3(),
-    boostE: WREN.boostCap, cruising: false, level: true, hits: 0, alt: 0,
+    boostE: WREN.boostCap, cruising: false, level: true, hits: 0, crushTime: 0, crushDamage: 0, alt: 0,
   };
 }
 
@@ -124,7 +127,14 @@ function contact(s: ShipState, planet: Planet): void {
 }
 
 function dropOutOfCruise(s: ShipState, planet: Planet): void {
-  if (s.alt < CRUISE_EXIT * planet.atmo) s.cruising = false;
+  if (s.alt - cruiseDatum(planet) < CRUISE_EXIT * planet.atmo) s.cruising = false;
+}
+
+/** Counts the time spent below a gas giant's crush depth. */
+function crush(s: ShipState, planet: Planet, dt: number): void {
+  if (planet.kind !== 'gas' || cloudAltitude(planet, s.pos) >= crushRadius(planet) - planet.radius) return;
+  s.crushTime += dt;
+  s.crushDamage = Math.floor(s.crushTime / CRUSH_TICK + 1e-6);
 }
 
 export function stepShip(s: ShipState, input: Input, planet: Planet, dt = DT): void {
@@ -142,8 +152,10 @@ export function stepShip(s: ShipState, input: Input, planet: Planet, dt = DT): v
   else s.boostE = Math.min(WREN.boostCap, s.boostE + WREN.boostRegen * dt);
 
   if (s.cruising) {
-    scale(s.vel, fwd, clamp((s.alt - planet.atmo) * SCALE.cruiseGain, WREN.maxSpeed, SCALE.cruiseMax));
+    const above = s.alt - cruiseDatum(planet) - planet.atmo;
+    scale(s.vel, fwd, clamp(above * SCALE.cruiseGain, WREN.maxSpeed, SCALE.cruiseMax));
   } else accelerate(s, input, planet, boosting, dt);
 
   move(s, planet, dt);
+  crush(s, planet, dt);
 }

@@ -215,3 +215,20 @@ describe('reports with a swarm (combat load test)', () => {
     }
   });
 });
+
+describe('reports in a world scene', () => {
+  const spread = { p50: 1, p95: 2, max: 3 };
+  const perf = {
+    stab: 2, windows: reportWindows(null, 2), frames: 3600, slowFrames: 0, measuredMs: 60000, frame: spread, processor: spread,
+    pose: spread, sim: { p95: 0.1, mean: 0.01 }, timerStep: 0.1, gpu: spread, gpuSamples: 3600, hasTimer: true,
+    tilesPeak: 91, trisPeak: 61234, pendingPeak: 40, buildMean: 0.9, buildMax: 6, builds: 800,
+  };
+  const rows = [{ phase: 'low' as const, mode: 2 as const, frames: 900, flickerMean: 0, flickerP95: 0, changeMean: 0, changeP95: 0 }];
+
+  it('name the world scene, and say nothing of one without it', () => {
+    for (const text of [formatPerf({ ...info, world: 'gas' }, perf), formatFlicker({ ...info, world: 'gas' }, rows)]) {
+      expect(text).toMatch(/^world scene {6}gas$/m);
+    }
+    for (const text of [formatPerf(info, perf), formatFlicker(info, rows)]) expect(text).not.toContain('world scene');
+  });
+});
