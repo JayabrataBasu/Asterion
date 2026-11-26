@@ -13,7 +13,7 @@ const SLICE_MS = 25;
 const PROGRESS_MS = 1000;
 
 export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
-  const { renderer, planet, info, sync } = page;
+  const { renderer, planet, info, sync, combat } = page, field = page.field ?? undefined;
   renderer.rockDir = pathFocus(planet);
   const secs = params.get('secs');
   const windows: ReportWindow[] = kind === 'perf'
@@ -24,10 +24,10 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
   let resized = 0, hidden = 0, wasHidden = false, prevNow = 0, nextProgress = 0, text = '';
   const start = (): void => {
     if (kind === 'perf') {
-      const run = new PerfRun(renderer, planet, windows, () => performance.now());
+      const run = new PerfRun(renderer, planet, windows, () => performance.now(), field);
       perf = run;
       renderer.onGpu = (f, ms) => run.gpu(f, ms);
-    } else flicker = new FlickerRun(renderer, planet, windows);
+    } else flicker = new FlickerRun(renderer, planet, windows, field);
     nextProgress = 0;
   };
   if (kind === 'perf') {
@@ -39,7 +39,8 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
     if (!at) return;
     const w = windows[at.window];
     info.textContent =
-      `${kind} run: ${w.phase}${kind === 'flicker' ? `, mode ${modeLabel(w.mode)}` : ''}  (part ${at.window + 1} of ${windows.length})  ` +
+      `${kind} run: ${perf?.counting ? 'counting what shows, ' : ''}` +
+      `${w.phase}${kind === 'flicker' ? `, mode ${modeLabel(w.mode)}` : ''}  (part ${at.window + 1} of ${windows.length})  ` +
       (at.frame < 0 ? 'waiting for the ground to load' : `frame ${at.frame + 1} of ${w.frames}`) + '\n' +
       `canvas ${renderer.W}x${renderer.H}  grid ${renderer.cols}x${renderer.rows}\n` +
       'Keep this tab in front. A change of window size (F11, zoom) starts the run again.';
@@ -58,6 +59,7 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
       dpr: window.devicePixelRatio, cols: renderer.cols, rows: renderer.rows,
       scale: Object.entries(SCALE).map(([k, v]) => `${k} ${v}`).join('  '),
       sync, notes,
+      swarm: combat && run.counts ? { ...combat, ...run.counts } : undefined,
     };
     text = perf ? formatPerf(about, perf.data()) : formatFlicker(about, flicker!.rows);
     element('reportText').textContent = text;

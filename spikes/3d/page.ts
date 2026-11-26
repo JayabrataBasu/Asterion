@@ -1,4 +1,6 @@
-/** What every view of the prototype page shares: URL parameters, the planet, the canvas and its renderer. */
+/** What every view of the prototype page shares: URL parameters, the planet, the canvas and its renderer, and the
+ *  combat load test if the URL asks for one. */
+import { type Capacity, type CombatConfig, CombatField, parseCombat } from './combat';
 import { watchContext } from './lost';
 import { type Planet, makePlanet } from './planet';
 import { Renderer3 } from './render';
@@ -15,15 +17,19 @@ export const element = <T extends HTMLElement>(id: string): T => document.getEle
 
 export interface Page {
   canvas: HTMLCanvasElement; info: HTMLPreElement; planet: Planet; renderer: Renderer3; sync: boolean; gpuName: string;
+  /** The combat load test: what was asked for, and its motion. Both null without one. */
+  combat: CombatConfig | null; field: CombatField | null;
   /** Rebuilds the drawing if the window size or the display scale (browser zoom) changed; true if it did. */
   fit(): boolean;
   /** True once the graphics context is gone: the loop must stop. The page then asks for a reload. */
   lost(): boolean;
 }
 
-export function openPage(sync: boolean): Page {
+/** `room`: room in the renderer for a swarm other than the URL's (the occlusion check places its own). */
+export function openPage(sync: boolean, room?: Capacity): Page {
   const canvas = element<HTMLCanvasElement>('c'), info = element<HTMLPreElement>('info');
-  const renderer = new Renderer3(canvas, { sync });
+  const combat = parseCombat(params);
+  const renderer = new Renderer3(canvas, { sync, swarm: room ?? combat });
   renderer.debug = intParam('dbg', 0, 1, 0);
   renderer.profile = params.get('profile') === '1'; // graphics time per pass
   const gl = renderer.gl, dbg = gl.getExtension('WEBGL_debug_renderer_info');
@@ -42,5 +48,6 @@ export function openPage(sync: boolean): Page {
   });
   // the context says it is lost before the event arrives: a frame in between must not run either
   const lost = (): boolean => told() || gl.isContextLost();
-  return { canvas, info, planet: makePlanet(1), renderer, sync, gpuName, fit, lost };
+  const field = combat ? new CombatField(combat) : null;
+  return { canvas, info, planet: makePlanet(1), renderer, sync, gpuName, combat, field, fit, lost };
 }

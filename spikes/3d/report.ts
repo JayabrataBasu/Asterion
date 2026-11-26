@@ -1,6 +1,7 @@
 /** The two reports without a browser or a renderer: which stretches of the scripted path to fly and in what order,
  *  and the text of the results. */
 import { DT } from '../../src/sim/sim';
+import type { SwarmCounts, Tally } from './combatDraw';
 import { MODE_NAMES, modeLabel } from './controls';
 import type { FlickerSummary } from './metrics';
 import { PATH_SECONDS, type Phase } from './path';
@@ -71,6 +72,14 @@ export interface RunInfo {
   scale: string; notes: string[];
   /** Tiles were built on the main thread, not by the workers. */
   sync: boolean;
+  /** The combat load test's scene and what of it showed; absent without one. */
+  swarm?: SwarmReport;
+}
+
+export interface SwarmReport {
+  scene: string; ships: number; bolts: number; particles: number;
+  /** Frames the counts were taken from, and the mean of each count over them. */
+  samples: number; mean: SwarmCounts;
 }
 
 export interface PerfData {
@@ -80,6 +89,8 @@ export interface PerfData {
   frame: Spread; processor: Spread; pose: Spread; sim: { p95: number; mean: number }; timerStep: number;
   gpu: Spread; gpuSamples: number; hasTimer: boolean;
   tilesPeak: number; trisPeak: number; pendingPeak: number; buildMean: number; buildMax: number; builds: number;
+  /** With a swarm: processor ms a frame spent placing it, and building and uploading its lists. */
+  swarm?: { motion: Spread; build: Spread };
 }
 
 export interface FlickerRow extends FlickerSummary { phase: Phase; mode: Mode; frames: number }
@@ -104,6 +115,21 @@ function head(title: string, i: RunInfo): string[] {
 }
 
 const tail = (notes: readonly string[]): string[] => notes.map(n => row('note', n));
+
+function swarmLines(s: SwarmReport | undefined): string[] {
+  if (!s) return [];
+  const columns = (c: string[]): string => c.slice(0, 3).map(v => v.padStart(10)).join('') + c[3].padStart(14);
+  const kind = (name: string, t: Tally): string =>
+    row('  ' + name, columns([t.drawn, t.hidden, t.covered, t.off].map(v => v.toFixed(1))));
+  return [
+    '',
+    row('scene', `${s.scene}: ${s.ships} other ships, ${s.bolts} bolts, ${s.particles} particles`),
+    row('counts', `mean of ${s.samples} sampled frames, one a second of path`),
+    row('per frame', columns(['drawn', 'hidden', 'covered', 'off screen'])),
+    kind('mesh ships', s.mean.ships), kind('marker ships', s.mean.markers), kind('bolts', s.mean.bolts), kind('particles', s.mean.particles),
+    '  hidden: all of it behind the world or a ship. covered: not hidden, but nearer characters take all its cells.',
+  ];
+}
 const tilesBuilt = (i: RunInfo): string => (i.sync ? 'tiles built on the main thread' : 'tiles built by background workers');
 
 /** The speed gate: p95 frame interval at most GATE_P95_MS, and at most GATE_SLOW frames over SLOW_MS a minute. */
@@ -127,6 +153,11 @@ export function formatPerf(i: RunInfo, d: PerfData): string {
     row('peak', `tiles ${d.tilesPeak}  triangles ${d.trisPeak}  pending builds ${d.pendingPeak}`),
     row('tile build ms', `mean ${ms(d.buildMean)}  worst ${ms(d.buildMax)}  (${d.builds} builds since the page opened)`),
     row('clock', `timer step ${d.timerStep.toFixed(3)} ms: a single time is only that exact`),
+    ...(d.swarm ? [
+      row('swarm motion ms', `${spread(d.swarm.motion)}  (placing ships, bolts and particles; in the processor time)`),
+      row('swarm lists ms', `${spread(d.swarm.build)}  (projecting, listing and uploading them; in the processor time)`),
+    ] : []),
+    ...swarmLines(i.swarm),
     ...tail(i.notes),
   ].join('\n');
 }
@@ -154,6 +185,8 @@ export function formatFlicker(i: RunInfo, rows: readonly FlickerRow[]): string {
     '',
     line(['phase', 'mode', 'frames', 'flicker mean', 'flicker p95', 'change mean', 'change p95']),
     ...sorted.map(r => line([r.phase, MODE_NAMES[r.mode], String(r.frames), pc(r.flickerMean), pc(r.flickerP95), pc(r.changeMean), pc(r.changeP95)])),
+    ...swarmLines(i.swarm),
+    ...(i.swarm ? [row('note', 'the glyph read-back includes markers, bolts and particles')] : []),
     ...tail([...FLICKER_NOTES, ...(i.sync ? [NO_POP] : []), ...i.notes]),
   ].join('\n');
 }

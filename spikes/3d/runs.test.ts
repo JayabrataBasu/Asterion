@@ -6,7 +6,9 @@ import { pose } from './path';
 import { altitude, makePlanet } from './planet';
 import type { Frame3 } from './render';
 import { type ReportWindow, reportWindows } from './report';
-import { FlickerRun, LATE_FRAMES, PerfRun, type ReportRenderer } from './runs';
+import { newSwarm } from './combat';
+import type { SwarmCounts } from './combatDraw';
+import { COUNT_EVERY, FlickerRun, LATE_FRAMES, PerfRun, type ReportRenderer, type SwarmSource } from './runs';
 
 const planet = makePlanet(1);
 
@@ -162,5 +164,78 @@ describe('the camera of the reports', () => {
     // the frames drawn after the path ends hold the last picture
     const late = by[3].slice(-LATE_FRAMES - 1);
     expect(camera(late)).toEqual(late.map(() => camera(late)[0]));
+  });
+});
+
+describe('reports with a swarm (combat load test)', () => {
+  const tally = (drawn: number) => ({ drawn, hidden: 1, covered: 0, off: 2 });
+  /** Counts that tell which frame they came from. */
+  class SwarmFake extends Fake {
+    readonly counted: number[] = []; readonly swarms: unknown[] = [];
+    swarmBuildMs = 0.5;
+    override render(f: Frame3): void { super.render(f); this.swarms.push(f.swarm); }
+    countSwarm(): SwarmCounts {
+      this.counted.push(this.frame);
+      return { ships: tally(this.counted.length), markers: tally(0), bolts: tally(10), particles: tally(100) };
+    }
+  }
+  const source = () => {
+    const calls: [number, Vec3, Quat][] = [];
+    const field: SwarmSource = {
+      swarm: newSwarm({ ships: 1, bolts: 0, particles: 0 }),
+      update: (t, pos, q) => { calls.push([t, { ...pos }, { ...q }]); },
+    };
+    return { field, calls };
+  };
+
+  it('counts once a second of path', () => expect(COUNT_EVERY).toBe(60));
+
+  it('moves the swarm around the path ship before every picture of the flicker run, and counts as it goes', () => {
+    const r = new SwarmFake(), { field, calls } = source();
+    const run = new FlickerRun(r, planet, reportWindows('2', 0).slice(0, 2), field);
+    while (run.tick()) { /* to the end */ }
+    expect(calls.length).toBe(r.frames.length);
+    r.frames.forEach((f, i) => expect(calls[i]).toEqual([f.time, f.ship!.pos, f.ship!.q]));
+    expect(r.swarms.every(s => s === field.swarm)).toBe(true);
+    // measured frames 0 and 60 of each window, after its two unmeasured ones
+    expect(r.counted).toEqual([3, 63, 125, 185]);
+    expect(run.counts).toEqual({ samples: 4, mean: { ships: tally(2.5), markers: tally(0), bolts: tally(10), particles: tally(100) } });
+  });
+
+  it('counts in the performance run after the timed frames, on a second pass that is not measured', () => {
+    const r = new SwarmFake(), { field, calls } = source();
+    let clock = 0;
+    const windows = reportWindows('2', 2), run = new PerfRun(r, planet, windows, () => (clock += 0.25), field);
+    let ticks = 0;
+    while (run.tick()) {
+      ticks++;
+      expect(r.counted.length === 0 || r.frame > 4 * 122 + LATE_FRAMES).toBe(true);
+      run.end(16, 2); run.gpu(r.frame, 5);
+    }
+    const first = 4 * 120 + 2; // the windows of a continuous stretch settle only at the jumps
+    expect(ticks).toBeGreaterThan(2 * first);
+    const d = run.data();
+    expect(d.frames).toBe(480);
+    expect(d.gpuSamples).toBe(480);
+    expect(d.swarm).toEqual({ motion: { p50: 0.25, p95: 0.25, max: 0.25 }, build: { p50: 0.5, p95: 0.5, max: 0.5 } });
+    expect(run.counts!.samples).toBe(8);
+    expect(calls.length).toBe(r.frames.length - LATE_FRAMES); // the late frames hold the last picture
+    // the counted pictures are the timed ones again: same time, same camera
+    for (const n of r.counted) {
+      const again = r.frames[n - 1];
+      const timed = r.frames.find(f => f.time === again.time)!;
+      expect([again.camPos, again.camQ]).toEqual([timed.camPos, timed.camQ]);
+    }
+  });
+
+  it('leaves frames, timing data and counts alone without one', () => {
+    const r = new SwarmFake(), run = new PerfRun(r, planet, reportWindows('0.1', 2), () => 0);
+    let ticks = 0;
+    while (run.tick()) ticks++;
+    expect(ticks).toBe(4 * (2 + 6) + LATE_FRAMES);
+    expect(r.swarms.every(s => s === undefined)).toBe(true);
+    expect(r.counted).toEqual([]);
+    expect(run.counts).toBeNull();
+    expect(run.data().swarm).toBeUndefined();
   });
 });

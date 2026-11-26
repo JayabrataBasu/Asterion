@@ -167,3 +167,51 @@ describe('formatFlicker notes', () => {
     expect(notes({ notes: ['started again once'] }).some(l => l.includes('started again once'))).toBe(true);
   });
 });
+
+describe('reports with a swarm (combat load test)', () => {
+  const tally = (drawn: number, hidden: number, covered: number, off: number) => ({ drawn, hidden, covered, off });
+  const swarm = {
+    scene: 'combat', ships: 14, bolts: 200, particles: 2000, samples: 60,
+    mean: { ships: tally(3.25, 1, 0, 8), markers: tally(0.5, 0.25, 0, 1), bolts: tally(70, 12, 3, 115), particles: tally(600, 200, 150, 1050) },
+  };
+  const spread = (p50: number, p95: number, max: number) => ({ p50, p95, max });
+  const perf = {
+    stab: 2, windows: reportWindows(null, 2), frames: 3600, slowFrames: 0, measuredMs: 60000,
+    frame: spread(16.7, 16.9, 20), processor: spread(2, 3, 5), pose: spread(0.1, 0.2, 0.9),
+    sim: { p95: 0.1, mean: 0.01 }, timerStep: 0.1, gpu: spread(6, 8, 12), gpuSamples: 3600, hasTimer: true,
+    tilesPeak: 91, trisPeak: 61234, pendingPeak: 40, buildMean: 0.9, buildMax: 6, builds: 800,
+    swarm: { motion: spread(0.4, 0.55, 1.5), build: spread(0.7, 0.95, 2.5) },
+  };
+  const line = (text: string, start: string): string => text.split('\n').find(l => l.startsWith(start))!;
+  const flickerRows = [{ phase: 'low' as const, mode: 2 as const, frames: 900, flickerMean: 0, flickerP95: 0, changeMean: 0, changeP95: 0 }];
+
+  it('name the scene and its counts', () => {
+    for (const text of [formatPerf({ ...info, swarm }, perf), formatFlicker({ ...info, swarm }, flickerRows)]) {
+      expect(line(text, 'scene')).toContain('combat: 14 other ships, 200 bolts, 2000 particles');
+    }
+  });
+  it('give the mean drawn, hidden, covered and off screen per sampled frame', () => {
+    for (const text of [formatPerf({ ...info, swarm }, perf), formatFlicker({ ...info, swarm }, flickerRows)]) {
+      expect(text).toContain('60 sampled frames');
+      expect(line(text, 'per frame').split(/\s{2,}/).slice(1)).toEqual(['drawn', 'hidden', 'covered', 'off screen']);
+      expect(line(text, '  mesh ships').split(/\s{2,}/).slice(2)).toEqual(['3.3', '1.0', '0.0', '8.0']);
+      expect(line(text, '  marker ships').split(/\s{2,}/).slice(2)).toEqual(['0.5', '0.3', '0.0', '1.0']);
+      expect(line(text, '  bolts').split(/\s{2,}/).slice(2)).toEqual(['70.0', '12.0', '3.0', '115.0']);
+      expect(line(text, '  particles').split(/\s{2,}/).slice(2)).toEqual(['600.0', '200.0', '150.0', '1050.0']);
+    }
+  });
+  it('give the processor time of motion and of the lists in the performance report', () => {
+    const text = formatPerf({ ...info, swarm }, perf);
+    expect(line(text, 'swarm motion ms')).toContain('p95 0.55');
+    expect(line(text, 'swarm lists ms')).toContain('p95 0.95');
+  });
+  it('say that the glyph read-back takes in the new characters', () => {
+    expect(formatFlicker({ ...info, swarm }, flickerRows)).toContain('glyph read-back includes markers, bolts and particles');
+  });
+  it('say nothing of a swarm when there is none', () => {
+    const { swarm: _, ...plain } = perf;
+    for (const text of [formatPerf(info, plain), formatFlicker(info, flickerRows)]) {
+      expect(text).not.toMatch(/scene|swarm|bolt|particle/);
+    }
+  });
+});

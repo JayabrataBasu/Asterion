@@ -2,17 +2,18 @@
  *  &dump=1 logs the characters as text, &measure=1 times 300 frames once the tiles have settled. The title becomes
  *  'ready' once every wanted tile is drawn. */
 import { CHARSET } from '../../src/gfx/atlas';
+import { sceneLine } from './combat';
 import { modeLabel } from './controls';
 import { type Page, params, stabParam } from './page';
 import { PATH_SECONDS, pathFocus, pose } from './path';
 import { altitude } from './planet';
-import { FOV_Y, type Frame3, PASSES } from './render';
+import { FOV_Y, type Frame3 } from './render';
 import { Measure } from './timing';
 
 const MEASURE_FRAMES = 300, LATE_FRAMES = 30; // graphics results arrive a few frames late
 
 export function showStill(page: Page): void {
-  const { renderer, planet, info, gpuName, sync } = page;
+  const { renderer, planet, info, gpuName, sync, combat, field } = page;
   const seconds = Math.min(PATH_SECONDS, Math.max(0, Number(params.get('pose')) || 0));
   const stab = stabParam();
   const measure = params.get('measure') === '1';
@@ -22,8 +23,9 @@ export function showStill(page: Page): void {
 
   const frame: Frame3 = {
     camPos: view.camPos, camQ: view.camQ, ship: showShip ? { pos: view.shipPos, q: view.shipQ } : null, planet,
-    time: seconds, stab,
+    time: seconds, stab, swarm: field?.swarm,
   };
+  field?.update(seconds, view.shipPos, view.shipQ, planet); // one moment: it stays
   const alt = altitude(planet, view.shipPos);
   let ready = false;
   let win: Measure | null = null, lateLeft = LATE_FRAMES;
@@ -66,7 +68,8 @@ export function showStill(page: Page): void {
       `canvas ${renderer.W}x${renderer.H}  grid ${renderer.cols}x${renderer.rows}  ${ready ? 'settled' : 'loading'}\n` +
       `tiles ${st.tiles}  tris ${st.tris}  pending ${st.pending}  built: worker ${st.workerBuilt} main ${st.syncBuilt}\n` +
       `build ms mean ${st.buildMsMean.toFixed(2)} max ${st.buildMsMax.toFixed(2)}  gpu ${renderer.hasTimer ? st.gpuMs.toFixed(2) + ' ms' : 'n/a'}\n` +
-      (renderer.profile ? 'passes ms: ' + PASSES.map((n, i) => `${n} ${renderer.passMs[i].toFixed(2)}`).join('  ') + '\n' : '') +
+      (combat ? sceneLine(combat) + `  lists ${renderer.swarmBuildMs.toFixed(2)} ms\n` : '') +
+      (renderer.profile ? 'passes ms: ' + renderer.passNames.map((n, i) => `${n} ${renderer.passMs[i].toFixed(2)}`).join('  ') + '\n' : '') +
       `${gpuName}${report}${dumpText}`;
     requestAnimationFrame(tick);
     // the window: whole-callback processor time (resize check, render, readout, scheduling the next frame). Its first

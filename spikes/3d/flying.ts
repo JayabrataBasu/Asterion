@@ -1,11 +1,12 @@
 /** Free flight in the browser: mouse capture, keys, the loop, reticle, pause screen and readout. The rules are in
  *  controls.ts, session.ts and camera.ts. The title becomes 'ready' once the first tiles are all drawn. */
 import { ChaseCamera } from './camera';
+import { sceneLine } from './combat';
 import { type Action, Controls, isGameKey, modeLabel } from './controls';
 import { len } from './math';
 import { type Page, element, stabParam } from './page';
 import { pathFocus } from './path';
-import { type Frame3, PASSES } from './render';
+import type { Frame3 } from './render';
 import { FlightSession } from './session';
 
 const READOUT_MS = 250;
@@ -14,7 +15,7 @@ const RETICLE_SCREEN = 0.25;
 const REFUSED = 'The browser did not capture the mouse. Click again.\n(Just after Esc it refuses for about a second.)';
 
 export function fly(page: Page): void {
-  const { canvas, renderer, planet, info } = page;
+  const { canvas, renderer, planet, info, combat, field } = page;
   const help = element('help'), note = element('note'), reticle = element('reticle'), centre = element('centre');
   const focus = pathFocus(planet);
   renderer.rockDir = focus;
@@ -22,6 +23,7 @@ export function fly(page: Page): void {
   camera.snap(session.pos, session.q, planet);
   const frame: Frame3 = {
     camPos: camera.pos, camQ: camera.q, ship: { pos: session.pos, q: session.q }, planet, time: session.time, stab: stabParam(),
+    swarm: field?.swarm,
   };
 
   // ---- the mouse, the keys, and everything that pauses
@@ -86,7 +88,8 @@ export function fly(page: Page): void {
       `altitude ${s.alt.toFixed(0)}   speed ${len(s.vel).toFixed(0)}   boost ${Math.max(0, s.boostE).toFixed(0)}\n` +
       `mode ${modeLabel(frame.stab)}   level ${s.level ? 'on' : 'off'}\n` +
       `cruise ${s.cruising ? 'ON' : 'off'}${controls.paused ? '   PAUSED' : ''}   P hides this` +
-      (renderer.profile ? '\npasses ms: ' + PASSES.map((n, i) => `${n} ${renderer.passMs[i].toFixed(2)}`).join('  ') : '');
+      (combat ? '\n' + sceneLine(combat) : '') +
+      (renderer.profile ? '\npasses ms: ' + renderer.passNames.map((n, i) => `${n} ${renderer.passMs[i].toFixed(2)}`).join('  ') : '');
   }
 
   function tick(now: number): void {
@@ -99,6 +102,7 @@ export function fly(page: Page): void {
     session.advance(seconds, controls);
     camera.update(session.pos, session.q, planet, session.time - drawnTime);
     drawnTime = frame.time = session.time;
+    field?.update(session.time, session.pos, session.q, planet);
     renderer.render(frame);
     if (!ready && renderer.settled) { ready = true; document.title = 'ready'; }
 

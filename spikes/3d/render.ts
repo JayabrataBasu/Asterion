@@ -1,11 +1,17 @@
 /** The 3D ASCII renderer: render passes and the planet tile cache.
  *  Pass 1 world geometry at 2x4 samples per cell -> pass 2 per-cell resolve (character choice, sky) -> pass 3 ship
- *  at 4x8 samples per cell -> the 2D game's FS_MATCH, FS_ASCII (a copy with one change: FS_ASCII3), bloom and composite. */
+ *  at 4x8 samples per cell -> the 2D game's FS_MATCH, FS_ASCII (a copy with one change: FS_ASCII3), bloom and composite.
+ *  A renderer made with room for a swarm (the combat load test, combatLayer.ts) adds other ships to pass 3 and draws
+ *  markers, bolts and particles between FS_ASCII and bloom. */
 import { settings } from '../../src/core/config';
 import { FILL_CHARS, MATCH_IDX, MATCH_N, buildAtlas, buildRampLut, gi, type AtlasInfo } from '../../src/gfx/atlas';
 import { FS_BLOOM_DOWN, FS_BLOOM_UP, FS_COMPOSITE, VS_FULLSCREEN } from '../../src/gfx/shaders';
 import { FS_MATCH } from '../../src/gfx/spriteShaders';
-import { type Quat, type Vec3, add, dot, len, qRotate, scale, sub, v3, viewProj } from './math';
+import type { Capacity, Swarm } from './combat';
+import type { SwarmCounts, SwarmView } from './combatDraw';
+import { type LayerFrame, SwarmLayer } from './combatLayer';
+import { beyondHorizon, inView } from './cull';
+import { type Quat, type Vec3, add, len, qRotate, scale, sub, v3, viewProj } from './math';
 import { type Mesh, rockMesh, wrenMesh } from './meshes';
 import { type Planet, atmoDensity } from './planet';
 import { SCALE } from './scale';
@@ -20,6 +26,8 @@ export interface Frame3 {
   camPos: Vec3; camQ: Quat;
   ship: { pos: Vec3; q: Quat } | null;
   planet: Planet; time: number;
+  /** Other ships, bolts and particles; only for a renderer made with room for them. */
+  swarm?: Swarm;
   /** Stability mode (see MODE_NAMES): 0 dithered, a screen-pattern dither on the bands; 1 plain, characters from
    *  material and band only; 2 held, as plain, a cell changing band only once its luminance passes the edge by HOLD
    *  (see keepsHistory). */
@@ -30,6 +38,7 @@ export interface Frame3 {
 export const FOV_Y = Math.PI / 3;
 const NEAR = 0.5; // as viewProj
 const FAR = 1e8; // log depth reaches 1 here
+const FC = 1 / Math.log2(FAR + 1);
 /** GPU slots, and the bound of the tile cache: more than the wanted tiles and their ancestors ever are near the
  *  ground, which is up to about 430 at depth 6 and 810 at depth 10. */
 export const MAX_TILES = 1024;
@@ -45,28 +54,14 @@ const HOLD = 0.05;
 /** Resolve glyph table: index order matches the G_* defines in shaders.ts. */
 /** Pass names for the per-pass profile. */
 export const PASSES = ['world', 'resolve', 'ship+match', 'ascii', 'bloom', 'composite'];
+/** With a swarm there are two more. */
+const SWARM_PASSES = [...PASSES, 'swarm ships', 'swarm characters'];
+const PASS_SWARM_SHIPS = 6, PASS_SWARM_CHARS = 7;
 const GLYPHS3 = ['-', '/', '|', '\\', '~', '=', ':', '%', '#', '.', "'", '*', ',', ';'];
 
 // ------------------------------------------------------------------ culling and cache rules (pure)
 
-/** Whether a sphere at view-space `p` (camera looking along -Z) can reach the view. */
-export function inView(p: Vec3, r: number, tanY: number, aspect: number, near: number): boolean {
-  if (-p.z + r < near) return false;
-  const tanX = tanY * aspect, kx = 1 / Math.hypot(1, tanX), ky = 1 / Math.hypot(1, tanY);
-  if ((p.x + tanX * p.z) * kx > r || (-p.x + tanX * p.z) * kx > r) return false;
-  return !((p.y + tanY * p.z) * ky > r || (-p.y + tanY * p.z) * ky > r);
-}
-
-/** Whether a sphere at `p` (relative to the camera) is wholly hidden behind a planet sphere of radius `R` centred at
- *  `planet` (also relative to the camera): beyond the horizon plane and inside the cone the sphere shades. */
-export function beyondHorizon(p: Vec3, r: number, planet: Vec3, R: number): boolean {
-  const D = len(planet), pl = len(p);
-  if (D <= R || pl <= r) return false;
-  const along = (D * D - dot(p, planet)) / D; // of p - planet, along the planet-to-camera direction
-  if (along + r >= R * R / D) return false;
-  const angle = Math.acos(Math.max(-1, Math.min(1, dot(p, planet) / (pl * D))));
-  return angle + Math.asin(Math.min(1, r / pl)) < Math.asin(R / D);
-}
+export { beyondHorizon, inView };
 
 /** Tiles to build next: each wanted tile and its missing ancestors, without what is cached or pending,
  *  coarsest first and nearest first within a depth, at most `max`. */
@@ -148,6 +143,9 @@ export class Renderer3 {
   rockDir: Vec3 = v3(0.6, 0.35, 0.72);
   /** Prototype check views: 1 shows every world cell as a red '#'. */
   debug = 0;
+  private readonly swarmLayer: SwarmLayer | null;
+  /** The layer, if the last frame had a swarm. */
+  private shown: SwarmLayer | null = null;
 
   private readonly sync: boolean;
   private hdr = false;
@@ -212,7 +210,8 @@ export class Renderer3 {
 
   private timerExt: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null = null;
 
-  constructor(readonly canvas: HTMLCanvasElement, opts: { sync: boolean }) {
+  /** `swarm`: the most other ships, bolts and particles a frame will bring (none: no swarm is drawn). */
+  constructor(readonly canvas: HTMLCanvasElement, opts: { sync: boolean; swarm?: Capacity | null }) {
     this.sync = opts.sync;
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 not available');
@@ -238,6 +237,7 @@ export class Renderer3 {
     this.uGlyphs = this.locs(this.pGlyphs, ['uScene', 'uMA', 'uRamp', 'uExposure']);
     this.uHalo = this.locs(this.pHalo, ['uMA', 'uCells']);
     this.vaoEmpty = gl.createVertexArray()!;
+    this.swarmLayer = opts.swarm ? new SwarmLayer(gl, opts.swarm, (vs, fs) => this.prog(vs, fs)) : null;
 
     // planet tiles: one big buffer per attribute, one slot per cached tile, one VAO per slot (all made here, once)
     const idx = tileIndices(); this.nIdx = idx.length;
@@ -385,6 +385,7 @@ export class Renderer3 {
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.sprT.fbo);
     gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.sprDepth);
     this.checkFbo('ship');
+    this.swarmLayer?.resize(cols, rows, this.sprT.fbo);
 
     this.matchA = this.colorTex(cols, rows); this.matchB = this.colorTex(cols, rows);
     this.matchFbo = gl.createFramebuffer()!; gl.bindFramebuffer(gl.FRAMEBUFFER, this.matchFbo);
@@ -606,6 +607,9 @@ export class Renderer3 {
   // ------------------------------------------------------------------ frame
   render(f: Frame3): void {
     const gl = this.gl, st = settings, p = f.planet;
+    if (f.swarm && !this.swarmLayer) throw new Error('this renderer was made without room for a swarm');
+    const sw = f.swarm ? this.swarmLayer : null;
+    this.shown = sw;
     this.frameNo++;
     this.timerBegin();
     this.refreshAtlas();
@@ -615,9 +619,14 @@ export class Renderer3 {
     const { cols, rows } = this;
     const aspect = cols / (rows * 2), tanY = Math.tan(FOV_Y / 2);
     viewProj(this.vp, f.camQ, FOV_Y, aspect);
-    const fc = 1 / Math.log2(FAR + 1), cellK = 2 * tanY / rows;
+    const fc = FC, cellK = 2 * tanY / rows;
     this.invQ.x = -f.camQ.x; this.invQ.y = -f.camQ.y; this.invQ.z = -f.camQ.z; this.invQ.w = f.camQ.w;
     sub(this.planetRel, p.center, f.camPos);
+    if (sw) {
+      const v = this.swarmView;
+      v.camPos = f.camPos; v.camQ = f.camQ; v.cols = cols; v.rows = rows; v.tanY = tanY; v.planet = p;
+      sw.prepare(f.swarm!, v, f.ship);
+    }
 
     // ---- pass 1: world at 2x4 samples per cell
     this.mark(0);
@@ -693,27 +702,37 @@ export class Renderer3 {
     gl.uniform1f(u.uSunK, st.sun); gl.uniform1fv(u.uG, this.G); gl.uniform1f(u.uFC, fc); gl.uniform1i(u.uDebug, this.debug);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-    // ---- pass 3: ship at 4x8 samples per cell, behind-world fragments dropped; then glyph matching
-    this.mark(2);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.matchFbo); gl.viewport(0, 0, cols, rows);
-    if (f.ship) {
+    // ---- pass 3: ships at 4x8 samples per cell, behind-world fragments dropped; then glyph matching
+    if (sw) { // the others first: the player's ship and the matching then share the target
+      this.mark(PASS_SWARM_SHIPS);
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.sprT!.fbo); gl.viewport(0, 0, cols * 4, rows * 8);
       gl.clearBufferfv(gl.COLOR, 0, ZERO4); gl.clearBufferfv(gl.DEPTH, 0, ONE1);
       gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
-      gl.useProgram(this.pShip); u = this.uShip;
-      const q = f.ship.q;
-      qRotate(this.axX, q, v3x); qRotate(this.axY, q, v3y); qRotate(this.axZ, q, v3z);
-      const m = this.shipRot;
-      m[0] = this.axX.x; m[1] = this.axX.y; m[2] = this.axX.z; m[3] = this.axY.x; m[4] = this.axY.y; m[5] = this.axY.z;
-      m[6] = this.axZ.x; m[7] = this.axZ.y; m[8] = this.axZ.z;
-      sub(this.rel, f.ship.pos, f.camPos);
-      gl.uniformMatrix4fv(u.uVP, false, this.vp); gl.uniformMatrix3fv(u.uRot, false, m);
-      gl.uniform3f(u.uOff, this.rel.x, this.rel.y, this.rel.z); gl.uniform1f(u.uFC, fc); gl.uniform1i(u.uDep, 6);
       const dens = atmoDensity(p, f.camPos);
-      gl.uniform3f(u.uSky, 0.05 + 0.25 * dens, 0.06 + 0.4 * dens, 0.09 + 0.7 * dens);
-      gl.bindVertexArray(this.shipVao);
-      gl.drawArrays(gl.TRIANGLES, 0, this.shipVerts);
-      tris += this.shipVerts / 3;
+      tris += sw.drawShips(this.layerFrame(), 0.05 + 0.25 * dens, 0.06 + 0.4 * dens, 0.09 + 0.7 * dens);
+    }
+    this.mark(2);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.matchFbo); gl.viewport(0, 0, cols, rows);
+    if (f.ship || sw) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.sprT!.fbo); gl.viewport(0, 0, cols * 4, rows * 8);
+      if (!sw) { gl.clearBufferfv(gl.COLOR, 0, ZERO4); gl.clearBufferfv(gl.DEPTH, 0, ONE1); }
+      gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+      if (f.ship) {
+        gl.useProgram(this.pShip); u = this.uShip;
+        const q = f.ship.q;
+        qRotate(this.axX, q, v3x); qRotate(this.axY, q, v3y); qRotate(this.axZ, q, v3z);
+        const m = this.shipRot;
+        m[0] = this.axX.x; m[1] = this.axX.y; m[2] = this.axX.z; m[3] = this.axY.x; m[4] = this.axY.y; m[5] = this.axY.z;
+        m[6] = this.axZ.x; m[7] = this.axZ.y; m[8] = this.axZ.z;
+        sub(this.rel, f.ship.pos, f.camPos);
+        gl.uniformMatrix4fv(u.uVP, false, this.vp); gl.uniformMatrix3fv(u.uRot, false, m);
+        gl.uniform3f(u.uOff, this.rel.x, this.rel.y, this.rel.z); gl.uniform1f(u.uFC, fc); gl.uniform1i(u.uDep, 6);
+        const dens = atmoDensity(p, f.camPos);
+        gl.uniform3f(u.uSky, 0.05 + 0.25 * dens, 0.06 + 0.4 * dens, 0.09 + 0.7 * dens);
+        gl.bindVertexArray(this.shipVao);
+        gl.drawArrays(gl.TRIANGLES, 0, this.shipVerts);
+        tris += this.shipVerts / 3;
+      }
       gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
 
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.matchFbo); gl.viewport(0, 0, cols, rows);
@@ -747,6 +766,11 @@ export class Renderer3 {
     gl.uniform3f(a.uReveal, -1, 4, 0); gl.uniform1i(a.uLayers, 0); gl.uniform2i(a.uWorldCell, 0, 0);
     gl.uniform4fv(a.uQZ, QZ_NONE); gl.uniform1i(a.uQN, 0); gl.uniform1i(a.uHalo, 3);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (sw) { // markers, bolts and particles over the characters, so that bloom takes them too
+      this.mark(PASS_SWARM_CHARS);
+      sw.drawPicture(this.layerFrame(), this.W, this.H, this.ox, this.oy, this.cwPx, this.chPx, this.resolveT!.tex, st.bgK);
+      gl.bindVertexArray(this.vaoEmpty);
+    }
 
     // ---- bloom (as the 2D renderer)
     this.mark(4);
@@ -790,7 +814,7 @@ export class Renderer3 {
     gl.uniform1f(c.uGrain, st.grain); gl.uniform4fv(c.uWarp, WARP_NONE);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.bindVertexArray(null);
-    this.mark(PASSES.length);
+    this.mark(SWARM_PASSES.length);
     this.timerEnd();
 
     this.stats.tiles = tiles; this.stats.tris = tris;
@@ -820,10 +844,30 @@ export class Renderer3 {
     gl.uniform1i(this.uGlyphs.uScene, 0); gl.uniform1i(this.uGlyphs.uMA, 4); gl.uniform1i(this.uGlyphs.uRamp, 2);
     gl.uniform1f(this.uGlyphs.uExposure, settings.exposure);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
+    this.shown?.drawIndices(this.layerFrame()); // markers, bolts and particles, over what they cover
     gl.readPixels(0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, this.readBuf);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindVertexArray(null);
     for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) out[(rows - 1 - y) * cols + x] = this.readBuf[(y * cols + x) * 4];
   }
+
+  // ------------------------------------------------------------------ swarm
+  private readonly swarmView: SwarmView = { camPos: v3(), camQ: { x: 0, y: 0, z: 0, w: 1 }, cols: 0, rows: 0, tanY: 0, planet: null };
+  private readonly forLayer = { vp: this.vp, fc: FC } as LayerFrame;
+  private layerFrame(): LayerFrame { this.forLayer.worldDepth = this.worldDep!; return this.forLayer; }
+
+  /** What of the last frame's swarm shows (null without one). Draws it again and reads it back: slow. */
+  countSwarm(): SwarmCounts | null {
+    if (!this.shown) return null;
+    const counts = this.shown.count(this.layerFrame()), gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.bindVertexArray(null);
+    return counts;
+  }
+  /** Processor ms the last frame spent on the swarm's lists and uploads; 0 without one. */
+  get swarmBuildMs(): number { return this.shown?.buildMs ?? 0; }
+  /** False: world and ships hide no marker, bolt or particle (the occlusion check's control). */
+  set swarmOcclude(on: boolean) { if (this.swarmLayer) this.swarmLayer.occlude = on; }
+  /** A rock of the field, for the occlusion check. */
+  rockAt(i: number): { pos: Vec3; size: number } | null { return this.rocks[i] ?? null; }
 
   // ------------------------------------------------------------------ GPU timing
   /** Called once for each frame whose graphics time came back, with that frame's number (see `frame`) and ms.
@@ -839,8 +883,10 @@ export class Renderer3 {
   /** Per-pass graphics timing instead of the whole frame (prototype measurement; needs the timer extension).
    *  Set before the first frame. While it is on, onGpu is not called and stats.gpuMs is the sum of the passes. */
   profile = false;
-  /** Smoothed graphics ms per pass, in PASSES order, while profiling. */
-  readonly passMs = new Float64Array(PASSES.length);
+  /** Smoothed graphics ms per pass, in passNames order, while profiling. */
+  readonly passMs = new Float64Array(SWARM_PASSES.length);
+  /** The names that go with passMs: the swarm's two only if there is room for a swarm. */
+  get passNames(): readonly string[] { return this.swarmLayer ? SWARM_PASSES : PASSES; }
   private frameTimer: FrameTimer<WebGLQuery> | null = null;
   private passTimers: FrameTimer<WebGLQuery>[] = [];
   private markOpen = -1; private disjointNow = false;
@@ -848,7 +894,7 @@ export class Renderer3 {
     this.stats.gpuMs += (ms - this.stats.gpuMs) * 0.1;
     this.onGpu?.(frame, ms);
   };
-  private readonly takePass = Array.from(PASSES, (_, i) => (_frame: number, ms: number): void => {
+  private readonly takePass = Array.from(SWARM_PASSES, (_, i) => (_frame: number, ms: number): void => {
     this.passMs[i] += (ms - this.passMs[i]) * 0.1;
     this.stats.gpuMs = shownGpuMs(true, 0, this.passMs);
   });
@@ -870,7 +916,7 @@ export class Renderer3 {
     if (!this.frameTimer) {
       const api = this.queryApi(ext);
       this.frameTimer = new FrameTimer(api, 6);
-      this.passTimers = PASSES.map(() => new FrameTimer(api, 6));
+      this.passTimers = this.passNames.map(() => new FrameTimer(api, 6));
     }
     if (!this.profile) this.frameTimer.begin(this.frameNo);
   }
@@ -882,11 +928,11 @@ export class Renderer3 {
     this.frameTimer.poll(this.takeFrame);
     for (let i = 0; i < this.passTimers.length; i++) this.passTimers[i].poll(this.takePass[i]);
   }
-  /** Ends the running pass timer and starts the one for pass `i` (PASSES.length: none, end of frame). */
+  /** Ends the running pass timer and starts the one for pass `i` (past the last one: none, end of frame). */
   private mark(i: number): void {
     if (!this.profile || this.passTimers.length === 0) return;
     if (this.markOpen >= 0) { this.passTimers[this.markOpen].end(); this.markOpen = -1; }
-    if (i < PASSES.length) { this.passTimers[i].begin(this.frameNo); this.markOpen = i; }
+    if (i < this.passTimers.length) { this.passTimers[i].begin(this.frameNo); this.markOpen = i; }
   }
   get hasTimer(): boolean { return this.timerExt !== null; }
 }
