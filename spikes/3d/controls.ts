@@ -5,6 +5,14 @@ import type { Input } from './flight';
 /** Mouse travel (movementX/Y units) from the centre of the reticle circle to its rim. */
 export const RETICLE_PX = 250;
 
+/** A single mouse movement larger than this on either axis is ignored: with the mouse captured, browsers now and then
+ *  report a jump that was never made, which would park the reticle on the rim. */
+export const SPIKE_PX = 200;
+
+/** The stability modes by their stab value (the URL parameter); the key stab + 1 selects each. */
+export const MODE_NAMES = ['dithered', 'plain', 'held'] as const;
+export function modeLabel(stab: number): string { return `${MODE_NAMES[stab]} (key ${stab + 1}, stab=${stab})`; }
+
 /** Prototype keys, which act when pressed; they also work while paused. */
 export type Action = 'level' | 'mode0' | 'mode1' | 'mode2' | 'restart' | 'readout';
 
@@ -53,6 +61,7 @@ export class Controls {
   /** Mouse movement, screen axes (down is positive y). */
   mouseMove(dx: number, dy: number): void {
     if (this.paused || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+    if (Math.abs(dx) > SPIKE_PX || Math.abs(dy) > SPIKE_PX) return;
     const x = this.mx + dx / RETICLE_PX, y = this.my - dy / RETICLE_PX;
     const over = Math.max(1, Math.hypot(x, y));
     this.mx = x / over; this.my = y / over;

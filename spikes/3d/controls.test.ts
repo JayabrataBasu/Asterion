@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Controls, RETICLE_PX, isGameKey } from './controls';
+import { Controls, RETICLE_PX, SPIKE_PX, isGameKey, modeLabel } from './controls';
 import type { Input } from './flight';
 
 const blank = (): Input => ({ mx: 9, my: 9, thrust: true, brake: true, roll: 9, strafeX: 9, strafeY: 9, boost: true, cruise: true });
@@ -82,11 +82,28 @@ describe('reticle', () => {
   });
   it('stays inside the unit circle, keeping its direction', () => {
     const c = flying();
-    c.mouseMove(RETICLE_PX * 3, -RETICLE_PX * 4);
+    for (let i = 0; i < 5; i++) c.mouseMove(RETICLE_PX * 0.6, -RETICLE_PX * 0.8); // 3 and 4 radii in all
     expect(Math.hypot(c.mx, c.my)).toBeCloseTo(1, 12);
     expect(c.mx).toBeCloseTo(0.6, 12); expect(c.my).toBeCloseTo(0.8, 12);
     c.mouseMove(-RETICLE_PX * 0.6, 0); // moves back from the rim at once, with no stored overshoot
     expect(c.mx).toBeCloseTo(0, 12);
+  });
+  it('ignores a single movement over 200 units on either axis, as pointer lock sometimes sends', () => {
+    expect(SPIKE_PX).toBe(200);
+    const c = flying();
+    c.mouseMove(50, -25);
+    const before = [c.mx, c.my];
+    for (const [dx, dy] of [[201, 0], [-201, 0], [0, 201], [0, -201], [5000, 3], [3, -5000], [200.5, 200.5]]) {
+      c.mouseMove(dx, dy);
+      expect([c.mx, c.my]).toEqual(before); // the whole event, not only the large axis
+    }
+  });
+  it('takes a movement of 200 units on both axes', () => {
+    for (const [dx, dy] of [[200, 0], [-200, 0], [0, 200], [0, -200], [200, 200]]) {
+      const c = flying();
+      c.mouseMove(dx, dy);
+      expect(Math.hypot(c.mx, c.my)).toBeCloseTo(Math.min(1, Math.hypot(dx, dy) / RETICLE_PX), 12);
+    }
   });
   it('ignores values that are not numbers', () => {
     const c = flying();
@@ -124,5 +141,16 @@ describe('losing focus (Esc, blur, hidden tab)', () => {
     expect(c.keyDown('Digit1')).toBe('mode0');
     c.resume();
     expect(read(c)).toEqual(IDLE);
+  });
+});
+
+describe('stability mode names', () => {
+  it('give the name, the key that selects it and the stab value', () => {
+    expect([0, 1, 2].map(modeLabel))
+      .toEqual(['dithered (key 1, stab=0)', 'plain (key 2, stab=1)', 'held (key 3, stab=2)']);
+  });
+  it('match the keys', () => {
+    const c = flying();
+    expect(['Digit1', 'Digit2', 'Digit3'].map(k => c.keyDown(k))).toEqual(['mode0', 'mode1', 'mode2']);
   });
 });

@@ -4,7 +4,16 @@ import { type Vec3, add, addScaled, cross, len, norm, scale, sub, v3 } from './m
 import { type Planet, height, material, surfaceRadius } from './planet';
 
 export const TILE_N = 16; // grid cells along a tile edge
-export const MAX_DEPTH = 6; // cells of about 11 units on the default planet, within 3 units of the height function
+/** Grid step near the ground to aim for, in units: the mesh then stays within 3 units of the height function. */
+const FINE_STEP = 11;
+const MIN_FINEST = 6, MAX_FINEST = 10;
+
+/** The finest depth of a planet's tiles: the first whose grid step is at most FINE_STEP, kept within 6..10 (past 10,
+ *  radii above 16 times the default, the step grows with the radius again). */
+export function finestDepth(p: Planet): number {
+  const depth = Math.ceil(Math.log2(p.radius * Math.PI / 2 / TILE_N / FINE_STEP));
+  return Math.min(MAX_FINEST, Math.max(MIN_FINEST, depth));
+}
 
 export interface TileId { face: number; depth: number; ix: number; iy: number }
 
@@ -49,11 +58,11 @@ function root(face: number): TileId { return { face, depth: 0, ix: 0, iy: 0 }; }
 const mid = v3(), toMid = v3();
 
 /** The tiles wanted from `camPos`: they cover the sphere once, and a tile is split while the camera is nearer to its
- *  centre (on the surface) than `split` times its arc length. */
+ *  centre (on the surface) than `split` times its arc length, down to the planet's finest depth. */
 export function selectTiles(p: Planet, camPos: Vec3, split = 2.2): TileId[] {
-  const out: TileId[] = [];
+  const out: TileId[] = [], finest = finestDepth(p);
   const visit = (t: TileId): void => {
-    if (t.depth < MAX_DEPTH) {
+    if (t.depth < finest) {
       faceDir(mid, t.face, coord(t.depth, t.ix, TILE_N / 2), coord(t.depth, t.iy, TILE_N / 2));
       add(toMid, p.center, scale(toMid, mid, surfaceRadius(p, mid)));
       if (len(sub(toMid, toMid, camPos)) < split * p.radius * Math.PI / 2 / 2 ** t.depth) {
@@ -68,9 +77,10 @@ export function selectTiles(p: Planet, camPos: Vec3, split = 2.2): TileId[] {
 }
 
 /** What to draw for the wanted tiles while only some meshes exist (`has`). A wanted tile is drawn itself, or else by
- *  finer tiles that cover all of it. Where neither can be done, the nearest available ancestor is drawn once and
- *  nothing below it. With the six roots available the result covers every wanted face without holes or overlap. */
-export function resolveDrawList(wanted: TileId[], has: (key: number) => boolean): TileId[] {
+ *  finer tiles, down to depth `finest`, that cover all of it. Where neither can be done, the nearest available
+ *  ancestor is drawn once and nothing below it. With the six roots available the result covers every wanted face
+ *  without holes or overlap. */
+export function resolveDrawList(wanted: TileId[], has: (key: number) => boolean, finest: number): TileId[] {
   // true: a wanted tile; false: above one
   const tree = new Map<number, boolean>();
   for (const t of wanted) {
@@ -85,7 +95,7 @@ export function resolveDrawList(wanted: TileId[], has: (key: number) => boolean)
   const out: TileId[] = [];
   /** Covers all of `t` with finer tiles, or adds nothing and returns false. */
   const fill = (t: TileId): boolean => {
-    if (t.depth >= MAX_DEPTH) return false;
+    if (t.depth >= finest) return false;
     const mark = out.length;
     for (let k = 0; k < 4; k++) {
       const c = child(t, k);
@@ -148,7 +158,7 @@ export function tileIndices(): Uint16Array {
   return new Uint16Array(out);
 }
 
-// Half-width, in ground units, of the slope measurement behind a normal: about one cell at full depth.
+// Half-width, in ground units, of the slope measurement behind a normal: about one cell at the finest depth.
 const NORMAL_STEP = 5;
 const tangent = v3(), bitangent = v3(), probe = v3(), slope = v3();
 const X = v3(1, 0, 0), Y = v3(0, 1, 0);

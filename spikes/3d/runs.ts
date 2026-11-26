@@ -1,9 +1,10 @@
 /** Drives the renderer along the scripted path for the two reports, one picture per tick. */
 import { DT } from '../../src/sim/sim';
+import { ChaseCamera } from './camera';
 import { type Input, newShip, stepShip } from './flight';
 import { copy, scale, sub, v3 } from './math';
 import { FlickerTally } from './metrics';
-import { pose } from './path';
+import { type PathPose, pose } from './path';
 import type { Planet } from './planet';
 import type { Frame3 } from './render';
 import { type FlickerRow, PathRun, type PathStep, type PerfData, type ReportWindow } from './report';
@@ -22,12 +23,23 @@ function newFrame(planet: Planet): Frame3 {
   return { camPos: v3(), camQ: { x: 0, y: 0, z: 0, w: 1 }, ship: { pos: v3(), q: { x: 0, y: 0, z: 0, w: 1 } }, planet, time: 0, stab: 2 };
 }
 
-/** Points `frame` at the path `t` seconds in, and returns the pose. */
-function place(frame: Frame3, t: number): ReturnType<typeof pose> {
-  const p = pose(t, frame.planet);
-  frame.camPos = p.camPos; frame.camQ = p.camQ; frame.time = t;
-  frame.ship!.pos = p.shipPos; frame.ship!.q = p.shipQ;
-  return p;
+/** The camera of a report: free flight's chase camera behind the path's ship, so that the ship turns and rolls on
+ *  screen as it does when flown. At the first step of every window it is put straight behind the ship; after that it
+ *  moves exactly 1/60 s for each measured frame, and stands while the lead step repeats. So a window's pictures
+ *  depend on the window alone. */
+class ReportCamera {
+  private readonly chase = new ChaseCamera();
+  private window = -1;
+
+  /** Puts the ship of pose `p`, drawn at step `step`, and the camera into `frame`. */
+  place(frame: Frame3, p: PathPose, step: PathStep): void {
+    if (step.window !== this.window) {
+      this.window = step.window;
+      this.chase.snap(p.shipPos, p.shipQ, frame.planet);
+    } else if (step.frame >= 0) this.chase.update(p.shipPos, p.shipQ, frame.planet, DT);
+    frame.camPos = this.chase.pos; frame.camQ = this.chase.q; frame.time = step.t;
+    frame.ship!.pos = p.shipPos; frame.ship!.q = p.shipQ;
+  }
 }
 
 /** Flicker: every window is drawn afresh (no band history carried in) and its measured frames are read back. */
@@ -37,6 +49,7 @@ export class FlickerRun {
   at: PathStep | null = null;
   private readonly path: PathRun;
   private readonly frame: Frame3;
+  private readonly camera = new ReportCamera();
   private tally = new FlickerTally(0);
 
   constructor(private readonly r: ReportRenderer, planet: Planet, readonly windows: readonly ReportWindow[]) {
@@ -53,7 +66,7 @@ export class FlickerRun {
     this.at = step;
     const win = this.windows[step.window];
     if (step.fresh) { this.r.resetHistory(); this.tally = new FlickerTally(this.r.cols * this.r.rows); }
-    place(this.frame, step.t);
+    this.camera.place(this.frame, pose(step.t, this.frame.planet), step);
     this.frame.stab = win.mode;
     this.r.render(this.frame);
     if (step.frame >= 0) {
@@ -75,6 +88,7 @@ export class PerfRun {
   private readonly path: PathRun;
   private readonly frame: Frame3;
   private readonly measure: Measure;
+  private readonly camera = new ReportCamera();
   private readonly sim = newShip();
   private readonly input: Input = { mx: 0, my: 0, thrust: true, brake: false, roll: 0, strafeX: 0, strafeY: 0, boost: false, cruise: false };
   private readonly last = v3();
@@ -107,8 +121,9 @@ export class PerfRun {
     if (step.fresh) this.r.resetHistory();
 
     const t0 = this.now();
-    const p = place(this.frame, step.t);
+    const p = pose(step.t, this.planet);
     const poseMs = this.now() - t0;
+    this.camera.place(this.frame, p, step);
 
     // the ship the path shows, moving as the path moves, so that the step meets the same ground and air
     const s = this.sim;
@@ -143,7 +158,7 @@ export class PerfRun {
     const m = this.measure.result(), st = this.r.stats;
     const spread = (v: number[]) => ({ p50: nearestRank(v, 0.5), p95: nearestRank(v, 0.95), max: nearestRank(v, 1) });
     return {
-      stab: this.windows[0].mode, windows: this.windows, frames: m.frames, slowFrames: m.slowFrames,
+      stab: this.windows[0].mode, windows: this.windows, frames: m.frames, slowFrames: m.slowFrames, measuredMs: m.totalMs,
       frame: m.frame, processor: m.tick, pose: spread(this.poseMs),
       sim: { p95: nearestRank(this.simMs, 0.95), mean: this.simMs.reduce((a, b) => a + b, 0) / (this.simMs.length || 1) },
       timerStep: this.timerStep, gpu: m.gpu, gpuSamples: m.gpuSamples, hasTimer: this.r.hasTimer,

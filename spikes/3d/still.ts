@@ -2,6 +2,7 @@
  *  &dump=1 logs the characters as text, &measure=1 times 300 frames once the tiles have settled. The title becomes
  *  'ready' once every wanted tile is drawn. */
 import { CHARSET } from '../../src/gfx/atlas';
+import { modeLabel } from './controls';
 import { type Page, params, stabParam } from './page';
 import { PATH_SECONDS, pathFocus, pose } from './path';
 import { altitude } from './planet';
@@ -51,6 +52,7 @@ export function showStill(page: Page): void {
   }
 
   function tick(now: number): void {
+    if (page.lost()) return;
     const t0 = performance.now();
     page.fit();
     renderer.render(frame);
@@ -60,7 +62,7 @@ export function showStill(page: Page): void {
       if (params.get('dump') === '1') dump();
     }
     info.textContent =
-      `t ${seconds} s  ${view.phase}  ship altitude ${alt.toFixed(0)}  stab ${stab}  ${sync ? 'sync' : 'worker'}  fov ${(FOV_Y * 180 / Math.PI).toFixed(0)}\n` +
+      `t ${seconds} s  ${view.phase}  ship altitude ${alt.toFixed(0)}  mode ${modeLabel(stab)}  ${sync ? 'sync' : 'worker'}  fov ${(FOV_Y * 180 / Math.PI).toFixed(0)}\n` +
       `canvas ${renderer.W}x${renderer.H}  grid ${renderer.cols}x${renderer.rows}  ${ready ? 'settled' : 'loading'}\n` +
       `tiles ${st.tiles}  tris ${st.tris}  pending ${st.pending}  built: worker ${st.workerBuilt} main ${st.syncBuilt}\n` +
       `build ms mean ${st.buildMsMean.toFixed(2)} max ${st.buildMsMax.toFixed(2)}  gpu ${renderer.hasTimer ? st.gpuMs.toFixed(2) + ' ms' : 'n/a'}\n` +

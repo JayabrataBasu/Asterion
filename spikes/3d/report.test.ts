@@ -4,7 +4,7 @@ import { PathRun, type PathStep, type ReportWindow, formatFlicker, formatPerf, r
 
 const info = {
   browser: 'TestBrowser/1.0', gpu: 'Test GPU', W: 1920, H: 1080, cssW: 1920, cssH: 1080, dpr: 1, cols: 240, rows: 67,
-  scale: 'radiusK 150', tiles: 'tiles built by workers', notes: [] as string[],
+  scale: 'radiusK 150', sync: false, notes: [] as string[],
 };
 
 describe('reportWindows', () => {
@@ -79,7 +79,7 @@ describe('PathRun', () => {
 describe('formatPerf', () => {
   const spread = (p50: number, p95: number, max: number) => ({ p50, p95, max });
   const data = {
-    stab: 2, windows: reportWindows(null, 2), frames: 3600, slowFrames: 3,
+    stab: 2, windows: reportWindows(null, 2), frames: 3600, slowFrames: 3, measuredMs: 90000,
     frame: spread(16.7, 16.9, 41.2), processor: spread(1.1, 2.2, 9.9), pose: spread(0.1, 0.2, 0.9),
     sim: { p95: 0.1, mean: 0.0031 }, timerStep: 0.1,
     gpu: spread(5.5, 7.5, 12), gpuSamples: 3590, hasTimer: true,
@@ -92,6 +92,30 @@ describe('formatPerf', () => {
       'p50 16.70', 'p95 16.90', 'worst 41.20', '3 over 25 ms', 'p95 2.20', 'p95 0.10', 'mean 0.0031', '5.50', '7.50',
       'tiles 91', 'triangles 61234', 'mean 0.93', 'worst 6.40', 'radiusK 150', 'restarted once', 'timer step 0.100 ms',
     ]) expect(text).toContain(part);
+  });
+  it('gives slow frames per minute of measured time, beside the count and the worst frame', () => {
+    const frameLine = (o: object): string => formatPerf(info, { ...data, ...o }).split('\n').find(l => l.startsWith('frame ms'))!;
+    const line = frameLine({});
+    for (const part of ['worst 41.20', '3 over 25 ms', '2.0 per minute']) expect(line).toContain(part);
+    expect(formatPerf(info, data)).toContain('p95 at most 17.5 ms, and at most 3 per minute over 25 ms');
+    expect(frameLine({ slowFrames: 7, measuredMs: 60000 })).toContain('7.0 per minute');
+    expect(frameLine({ slowFrames: 1, measuredMs: 8000 })).toContain('7.5 per minute');
+    expect(frameLine({ slowFrames: 0, measuredMs: 0 })).toContain('0.0 per minute');
+  });
+  it('calls the simulation time one ship only, with no budget', () => {
+    const line = formatPerf(info, data).split('\n').find(l => l.startsWith('simulation ms'))!;
+    expect(line).toContain('one ship only');
+    expect(line).toContain('not the game\'s simulation budget');
+    expect(line).not.toMatch(/budget 2/);
+  });
+  it('names the stability mode, its key and its stab value', () => {
+    expect(formatPerf(info, data)).toContain('stability mode held (key 3, stab=2)');
+    expect(formatPerf(info, { ...data, stab: 0 })).toContain('stability mode dithered (key 1, stab=0)');
+    expect(formatPerf(info, { ...data, stab: 1 })).toContain('stability mode plain (key 2, stab=1)');
+  });
+  it('says where tiles were built', () => {
+    expect(formatPerf(info, data)).toContain('tiles built by background workers');
+    expect(formatPerf({ ...info, sync: true }, data)).toContain('tiles built on the main thread');
   });
   it('says when graphics time is not available', () => {
     const text = formatPerf(info, { ...data, hasTimer: false, gpuSamples: 0 });
@@ -111,10 +135,35 @@ describe('formatFlicker', () => {
     const text = formatFlicker(info, rows);
     const table = text.split('\n').filter(l => /^(approach|descent|low|climb) /.test(l));
     expect(table.length).toBe(12);
-    expect(table.map(l => l.split(/\s+/).slice(0, 2).join(' ')).slice(0, 4)).toEqual(['approach 0', 'approach 1', 'approach 2', 'descent 0']);
-    expect(table[2].split(/\s+/)).toEqual(['approach', '2', '900', '0.300', '0.448', '3.133', '5.174']);
+    expect(table.map(l => l.split(/\s+/).slice(0, 2).join(' ')).slice(0, 4))
+      .toEqual(['approach dithered', 'approach plain', 'approach held', 'descent dithered']);
+    expect(table[2].split(/\s+/)).toEqual(['approach', 'held', '900', '0.300', '0.448', '3.133', '5.174']);
+    expect(text).toContain('mode: dithered (key 1, stab=0), plain (key 2, stab=1), held (key 3, stab=2)');
     expect(text).toContain('240x67');
     expect(text).toContain('TestBrowser/1.0');
     expect(text).toContain('full 15 s phases');
+  });
+});
+
+describe('formatFlicker notes', () => {
+  const rows = [{ phase: 'low' as const, mode: 2 as const, frames: 900, flickerMean: 0, flickerP95: 0, changeMean: 0, changeP95: 0 }];
+  const notes = (o: object = {}): string[] =>
+    formatFlicker({ ...info, sync: true, ...o }, rows).split('\n').filter(l => l.startsWith('note '));
+
+  it('say how far the flicker figure can be trusted', () => {
+    const text = notes().join('\n');
+    for (const part of [
+      'flicker is for comparing modes', 'beside the change rate', 'screen-fixed speckle and crawl are not counted',
+      'lower or boosted flight moves the ground more than this path does', 'the eye decides the look',
+    ]) expect(text).toContain(part);
+    for (const line of notes()) expect(line.length).toBeLessThanOrEqual(110);
+  });
+  it('say that worker tile arrival pop is left out, when tiles are built on the main thread', () => {
+    const pop = 'worker tile arrival pop is not included; judge popping during descent by eye';
+    expect(notes().join('\n')).toContain(pop);
+    expect(notes({ sync: false }).join('\n')).not.toContain(pop);
+  });
+  it('keep the notes of the run itself', () => {
+    expect(notes({ notes: ['started again once'] }).some(l => l.includes('started again once'))).toBe(true);
   });
 });

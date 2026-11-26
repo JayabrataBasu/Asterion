@@ -123,6 +123,7 @@ describe('Measure', () => {
     expect(m.full).toBe(true);
     const r = m.result();
     expect(r.frames).toBe(2); expect(r.slowFrames).toBe(0); expect(r.frame.max).toBe(16.7); expect(r.tick.max).toBe(2);
+    expect(r.totalMs).toBeCloseTo(33.3, 9); // the intervals of the window only: the time its slow frames are counted over
     expect(r.gpuSamples).toBe(1); expect(r.gpu.max).toBe(5);
   });
   it('nearestRank', () => {

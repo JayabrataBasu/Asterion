@@ -4,7 +4,7 @@ import { type Vec3, add, addScaled, cross, dot, len, norm, sub, v3 } from './mat
 import { type Planet, height, makePlanet, material, surfaceRadius } from './planet';
 import { SCALE } from './scale';
 import {
-  MAX_DEPTH, TILE_N, type TileId, type TileMesh, buildTile, faceDir, resolveDrawList, selectTiles, tileIndices, tileKey,
+  TILE_N, type TileId, type TileMesh, buildTile, faceDir, finestDepth, resolveDrawList, selectTiles, tileIndices, tileKey,
 } from './tiles';
 import type { TileRequest } from './worker';
 
@@ -15,6 +15,8 @@ vi.mock('./planet', async (original) => {
 
 const N = TILE_N, ROW = N + 1, GRID = ROW * ROW;
 const p = makePlanet(1);
+/** The finest depth of the default planet. */
+const FINE = finestDepth(p);
 const FACES = [0, 1, 2, 3, 4, 5];
 const ROOTS: TileId[] = FACES.map(face => ({ face, depth: 0, ix: 0, iy: 0 }));
 
@@ -105,7 +107,7 @@ describe('tile selection', () => {
   });
 
   it('reaches full depth under a low camera', () => {
-    for (const d of subs) expect(tileUnder(selectTiles(p, atAltitude(p, d, 20)), d).depth).toBe(MAX_DEPTH);
+    for (const d of subs) expect(tileUnder(selectTiles(p, atAltitude(p, d, 20)), d).depth).toBe(FINE);
   });
 
   it('covers the sphere exactly once at every height', () => {
@@ -130,6 +132,77 @@ describe('tile selection', () => {
   });
 });
 
+describe('finest depth', () => {
+  const saved = { ...SCALE };
+  afterEach(() => { Object.assign(SCALE, saved); });
+  const scaled = (radiusK: number): Planet => { Object.assign(SCALE, { radiusK }); return makePlanet(1); };
+  const stepAt = (pl: Planet, depth: number): number => pl.radius * Math.PI / 2 / 2 ** depth / TILE_N;
+
+  it('is 6 on the default planet', () => {
+    expect(SCALE.radiusK).toBe(150);
+    expect(finestDepth(makePlanet(1))).toBe(6);
+  });
+
+  it('grows with the radius, so the grid step near the ground stays at most 11 units', () => {
+    for (const [radiusK, depth] of [[150, 6], [300, 7], [600, 8], [1200, 9]]) {
+      const pl = scaled(radiusK);
+      expect(finestDepth(pl)).toBe(depth);
+      expect(stepAt(pl, depth)).toBeLessThanOrEqual(11);
+      if (depth > 6) expect(stepAt(pl, depth - 1)).toBeGreaterThan(11); // and no finer than that needs
+    }
+  });
+
+  it('stays between 6 and 10 whatever the radius', () => {
+    expect(finestDepth(scaled(1))).toBe(6);
+    expect(finestDepth(scaled(100))).toBe(6);
+    expect(finestDepth(scaled(2400))).toBe(10);
+    expect(finestDepth(scaled(100000))).toBe(10);
+  });
+
+  it('is what a low camera gets, covering the sphere once', () => {
+    for (const radiusK of [150, 300, 600, 2400]) {
+      const pl = scaled(radiusK), fine = finestDepth(pl), r = new Rng(31);
+      for (let i = 0; i < 6; i++) {
+        const d = randomDir(r), sel = selectTiles(pl, atAltitude(pl, d, 20));
+        expect(tileUnder(sel, d).depth).toBe(fine);
+        expect(Math.max(...sel.map(t => t.depth))).toBe(fine);
+        expect(area(sel)).toBeCloseTo(6);
+        expect(anyAncestorPair(sel)).toBe(false);
+      }
+    }
+  });
+
+  it('is how far the draw list looks for finer tiles', () => {
+    const wanted: TileId = { face: 2, depth: 6, ix: 5, iy: 9 };
+    const finer = children(wanted).flatMap(children); // depth 8
+    const keys = new Set([ROOTS[2], ...finer].map(tileKey)), has = (k: number): boolean => keys.has(k);
+    expect(resolveDrawList([wanted], has, 8)).toEqual(finer);
+    expect(resolveDrawList([wanted], has, 7)).toEqual([ROOTS[2]]);
+  });
+
+  it('keeps the mesh within 3 units of the collision surface near the ground', () => {
+    for (const radiusK of [150, 300, 600]) {
+      const pl = scaled(radiusK), r = new Rng(41);
+      let maxError = 0;
+      for (let t = 0; t < 150; t++) {
+        const m = buildTile(pl, randomTile(r, finestDepth(pl)));
+        for (let s = 0; s < 20; s++) {
+          const tri = SURFACE[Math.floor(r.range(0, SURFACE.length))];
+          let a = r.next(), b = r.next();
+          if (a + b > 1) { a = 1 - a; b = 1 - b; }
+          const point = world(m, tri[0]);
+          addScaled(point, point, sub(v3(), world(m, tri[1]), world(m, tri[0])), a);
+          addScaled(point, point, sub(v3(), world(m, tri[2]), world(m, tri[0])), b);
+          const rel = sub(v3(), point, pl.center);
+          maxError = Math.max(maxError, Math.abs(len(rel) - surfaceRadius(pl, norm(v3(), rel))));
+        }
+      }
+      expect(maxError).toBeGreaterThan(0);
+      expect(maxError).toBeLessThanOrEqual(3);
+    }
+  });
+});
+
 describe('tile mesh', () => {
   it('has a grid and a skirt ring of vertices, indexed in range', () => {
     const m = buildTile(p, { face: 2, depth: 3, ix: 4, iy: 1 }), count = GRID + 4 * N;
@@ -151,9 +224,9 @@ describe('tile mesh', () => {
     moved.center = v3(250000, -100000, 40000);
     const r = new Rng(5);
     for (let t = 0; t < 20; t++) {
-      const id = randomTile(r, MAX_DEPTH), m = buildTile(moved, id);
+      const id = randomTile(r, FINE), m = buildTile(moved, id);
       expect(contains(id, norm(v3(), sub(v3(), m.center, moved.center)))).toBe(true);
-      expect(Math.max(...m.pos.map(Math.abs))).toBeLessThan(2 * moved.radius * Math.PI / 2 / 2 ** MAX_DEPTH + moved.relief);
+      expect(Math.max(...m.pos.map(Math.abs))).toBeLessThan(2 * moved.radius * Math.PI / 2 / 2 ** FINE + moved.relief);
       for (let k = 0; k < GRID; k++) {
         const rel = sub(v3(), world(m, k), moved.center), d = norm(v3(), rel);
         expect(len(rel)).toBeCloseTo(surfaceRadius(moved, d), 3);
@@ -179,7 +252,7 @@ describe('tile mesh', () => {
     const r = new Rng(7);
     let maxError = 0;
     for (let i = 0; i < 200; i++) {
-      const m = buildTile(p, randomTile(r, MAX_DEPTH));
+      const m = buildTile(p, randomTile(r, FINE));
       const tri = SURFACE[Math.floor(r.range(0, SURFACE.length))];
       let a = r.next(), b = r.next();
       if (a + b > 1) { a = 1 - a; b = 1 - b; }
@@ -194,7 +267,7 @@ describe('tile mesh', () => {
   });
 
   it('winds every surface triangle counter-clockwise seen from outside, on all six faces', () => {
-    for (const id of [...ROOTS, ...FACES.map(face => ({ face, depth: MAX_DEPTH, ix: 13, iy: 50 }))]) {
+    for (const id of [...ROOTS, ...FACES.map(face => ({ face, depth: FINE, ix: 13, iy: 50 }))]) {
       const m = buildTile(p, id);
       for (const [a, b, c] of SURFACE) {
         const A = world(m, a), face = cross(v3(), sub(v3(), world(m, b), A), sub(v3(), world(m, c), A));
@@ -204,7 +277,7 @@ describe('tile mesh', () => {
   });
 
   it('winds every skirt triangle to face away from its tile, on all six faces', () => {
-    for (const id of [...ROOTS, ...FACES.map(face => ({ face, depth: MAX_DEPTH, ix: 13, iy: 50 }))]) {
+    for (const id of [...ROOTS, ...FACES.map(face => ({ face, depth: FINE, ix: 13, iy: 50 }))]) {
       const m = buildTile(p, id), middle = world(m, (N / 2) * ROW + N / 2);
       for (const [a, b, c] of SKIRT) {
         const A = world(m, a), B = world(m, b), C = world(m, c);
@@ -246,12 +319,12 @@ describe('tile seams', () => {
   });
 
   it('neighbours at full depth meet, within a face and across a cube edge', () => {
-    const last = 2 ** MAX_DEPTH - 1;
+    const last = 2 ** FINE - 1;
     // face 4's right edge is face 0's left edge, at the same v; face 0's top edge is face 2's right edge
     const pairs: [TileId, TileId][] = [
-      [{ face: 4, depth: MAX_DEPTH, ix: 20, iy: 31 }, { face: 4, depth: MAX_DEPTH, ix: 21, iy: 31 }],
-      [{ face: 4, depth: MAX_DEPTH, ix: last, iy: 9 }, { face: 0, depth: MAX_DEPTH, ix: 0, iy: 9 }],
-      [{ face: 0, depth: MAX_DEPTH, ix: 40, iy: last }, { face: 2, depth: MAX_DEPTH, ix: last, iy: 40 }],
+      [{ face: 4, depth: FINE, ix: 20, iy: 31 }, { face: 4, depth: FINE, ix: 21, iy: 31 }],
+      [{ face: 4, depth: FINE, ix: last, iy: 9 }, { face: 0, depth: FINE, ix: 0, iy: 9 }],
+      [{ face: 0, depth: FINE, ix: 40, iy: last }, { face: 2, depth: FINE, ix: last, iy: 40 }],
     ];
     for (const [a, b] of pairs) {
       const A = buildTile(p, a), B = buildTile(p, b);
@@ -275,7 +348,7 @@ describe('tile normals', () => {
     const r = new Rng(8);
     let land = 0, water = 0, tilted = 0;
     for (let t = 0; t < 40; t++) {
-      const m = buildTile(p, randomTile(r, MAX_DEPTH));
+      const m = buildTile(p, randomTile(r, FINE));
       for (let j = 1; j < N; j++) for (let i = 1; i < N; i++) {
         const k = j * ROW + i, n = normal(m, k), d = norm(v3(), sub(v3(), world(m, k), p.center));
         expect(len(n)).toBeCloseTo(1, 5);
@@ -318,7 +391,7 @@ describe('tile skirts', () => {
   it('reach below the edge of every tile of every depth, so no step between depths shows through', () => {
     const r = new Rng(9);
     const ids = [...ROOTS, ...allAt(1)];
-    for (let d = 2; d <= MAX_DEPTH; d++) for (let i = 0; i < 20; i++) ids.push(randomTile(r, d));
+    for (let d = 2; d <= FINE; d++) for (let i = 0; i < 20; i++) ids.push(randomTile(r, d));
     let lowestEdge = Infinity, highestSkirtFoot = 0;
     for (const id of ids) {
       const m = buildTile(p, id);
@@ -344,35 +417,35 @@ describe('draw list', () => {
   };
 
   it('draws the parent once while one child is missing', () => {
-    expect(resolveDrawList(kids, having([ROOTS[3], parent, kids[0], kids[1], kids[3]]))).toEqual([parent]);
+    expect(resolveDrawList(kids, having([ROOTS[3], parent, kids[0], kids[1], kids[3]]), FINE)).toEqual([parent]);
   });
 
   it('draws the children when all are there', () => {
-    expect(resolveDrawList(kids, having([ROOTS[3], parent, ...kids]))).toEqual(kids);
+    expect(resolveDrawList(kids, having([ROOTS[3], parent, ...kids]), FINE)).toEqual(kids);
   });
 
   it('falls back to the nearest available ancestor', () => {
-    expect(resolveDrawList(kids, having([ROOTS[3], ancestor(parent, 1)]))).toEqual([ancestor(parent, 1)]);
-    expect(resolveDrawList(kids, having([ROOTS[3]]))).toEqual([ROOTS[3]]);
+    expect(resolveDrawList(kids, having([ROOTS[3], ancestor(parent, 1)]), FINE)).toEqual([ancestor(parent, 1)]);
+    expect(resolveDrawList(kids, having([ROOTS[3]]), FINE)).toEqual([ROOTS[3]]);
   });
 
   it('draws finer tiles in place of a wanted tile that is missing, if they cover all of it', () => {
     const [a, b, c, d] = kids;
-    expect(resolveDrawList([parent], having([ROOTS[3], ...kids]))).toEqual(kids);
-    expect(resolveDrawList([parent], having([ROOTS[3], a, b, c, ...children(d)]))).toEqual([a, b, c, ...children(d)]);
-    expect(resolveDrawList([parent], having([ROOTS[3], a, b, c, ...children(d).slice(1)]))).toEqual([ROOTS[3]]);
+    expect(resolveDrawList([parent], having([ROOTS[3], ...kids]), FINE)).toEqual(kids);
+    expect(resolveDrawList([parent], having([ROOTS[3], a, b, c, ...children(d)]), FINE)).toEqual([a, b, c, ...children(d)]);
+    expect(resolveDrawList([parent], having([ROOTS[3], a, b, c, ...children(d).slice(1)]), FINE)).toEqual([ROOTS[3]]);
   });
 
   it('keeps a finished quadrant when its neighbour falls back', () => {
     const wanted = [...children(kids[0]), kids[1], kids[2], kids[3]];
     const has = having([ROOTS[3], parent, kids[0], kids[1], kids[2], kids[3], ...children(kids[0]).slice(1)]);
-    expect(resolveDrawList(wanted, has)).toEqual([kids[0], kids[1], kids[2], kids[3]]);
+    expect(resolveDrawList(wanted, has, FINE)).toEqual([kids[0], kids[1], kids[2], kids[3]]);
   });
 
   it('never overlaps or leaves a hole, whatever is wanted and available', () => {
     const r = new Rng(21);
     const partition = (t: TileId, chance: number): TileId[] =>
-      t.depth < MAX_DEPTH && r.next() < chance ? children(t).flatMap(c => partition(c, chance * 0.8)) : [t];
+      t.depth < FINE && r.next() < chance ? children(t).flatMap(c => partition(c, chance * 0.8)) : [t];
     for (let round = 0; round < 400; round++) {
       const wanted = ROOTS.flatMap(t => partition(t, r.range(0.2, 0.9)));
       const share = r.next(), memo = new Map<number, boolean>();
@@ -381,7 +454,7 @@ describe('draw list', () => {
         if (!memo.has(key)) memo.set(key, r.next() < share);
         return memo.get(key)!;
       };
-      const drawn = resolveDrawList(wanted, has);
+      const drawn = resolveDrawList(wanted, has, FINE);
 
       // no hole and no overlap: no tile twice or inside another, and together the area of the whole sphere
       const keys = new Set(drawn.map(tileKey));
@@ -390,7 +463,7 @@ describe('draw list', () => {
       expect(area(drawn)).toBeCloseTo(6, 9);
 
       const wantedKeys = new Set(wanted.map(tileKey));
-      const covered = (t: TileId): boolean => has(tileKey(t)) || (t.depth < MAX_DEPTH && children(t).every(covered));
+      const covered = (t: TileId): boolean => has(tileKey(t)) || (t.depth < FINE && children(t).every(covered));
       for (const t of drawn) {
         expect(has(tileKey(t))).toBe(true);
         if (wantedKeys.has(tileKey(t))) continue;
@@ -405,7 +478,7 @@ describe('draw list', () => {
 
   it('is the wanted list itself when everything is there', () => {
     const wanted = selectTiles(p, atAltitude(p, faceDir(v3(), 0, 0.2, 0.4), 20));
-    expect(resolveDrawList(wanted, () => true)).toEqual(wanted);
+    expect(resolveDrawList(wanted, () => true, FINE)).toEqual(wanted);
   });
 });
 

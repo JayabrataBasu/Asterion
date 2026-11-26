@@ -1,9 +1,10 @@
 /** The two reports without a browser or a renderer: which stretches of the scripted path to fly and in what order,
  *  and the text of the results. */
 import { DT } from '../../src/sim/sim';
+import { MODE_NAMES, modeLabel } from './controls';
 import type { FlickerSummary } from './metrics';
 import { PATH_SECONDS, type Phase } from './path';
-import type { Spread } from './timing';
+import { SLOW_MS, type Spread } from './timing';
 
 export type Mode = 0 | 1 | 2;
 /** `frames` frames of the path from `start` seconds, 1/60 s apart, drawn in stability mode `mode`. */
@@ -67,12 +68,15 @@ export class PathRun {
 export interface RunInfo {
   browser: string; gpu: string;
   W: number; H: number; cssW: number; cssH: number; dpr: number; cols: number; rows: number;
-  scale: string; tiles: string; notes: string[];
+  scale: string; notes: string[];
+  /** Tiles were built on the main thread, not by the workers. */
+  sync: boolean;
 }
 
 export interface PerfData {
   stab: number; windows: readonly ReportWindow[];
-  frames: number; slowFrames: number;
+  /** `measuredMs`: the time the measured frames took, the sum of their intervals. */
+  frames: number; slowFrames: number; measuredMs: number;
   frame: Spread; processor: Spread; pose: Spread; sim: { p95: number; mean: number }; timerStep: number;
   gpu: Spread; gpuSamples: number; hasTimer: boolean;
   tilesPeak: number; trisPeak: number; pendingPeak: number; buildMean: number; buildMax: number; builds: number;
@@ -99,43 +103,57 @@ function head(title: string, i: RunInfo): string[] {
   ];
 }
 
-const tail = (i: RunInfo): string[] => i.notes.map(n => row('note', n));
+const tail = (notes: readonly string[]): string[] => notes.map(n => row('note', n));
+const tilesBuilt = (i: RunInfo): string => (i.sync ? 'tiles built on the main thread' : 'tiles built by background workers');
+
+/** The speed gate: p95 frame interval at most GATE_P95_MS, and at most GATE_SLOW frames over SLOW_MS a minute. */
+const GATE_P95_MS = 17.5, GATE_SLOW = 3;
 
 export function formatPerf(i: RunInfo, d: PerfData): string {
   const spread = (s: Spread): string => `p50 ${ms(s.p50)}  p95 ${ms(s.p95)}  worst ${ms(s.max)}`;
+  const slowPerMinute = d.measuredMs > 0 ? d.slowFrames * 60000 / d.measuredMs : 0;
   return [
     ...head('performance report', i),
-    row('run', `${stretch(d.windows[0].frames)}, ${d.frames} frames of 1/60 s of path, stability mode ${d.stab}, ${i.tiles}`),
+    row('run', `${stretch(d.windows[0].frames)}, ${d.frames} frames of 1/60 s of path, stability mode ${modeLabel(d.stab)}, ${tilesBuilt(i)}`),
     '',
-    row('frame ms', `${spread(d.frame)}  (${d.slowFrames} over 25 ms)`),
+    row('frame ms', `${spread(d.frame)}  (${d.slowFrames} over ${SLOW_MS} ms, ${slowPerMinute.toFixed(1)} per minute)`),
+    row('  speed gate', `p95 at most ${GATE_P95_MS} ms, and at most ${GATE_SLOW} per minute over ${SLOW_MS} ms`),
     row('processor ms', `${spread(d.processor)}  (whole frame callback; budget 6)`),
-    row('  scripted path', `${spread(d.pose)}  (placing the scripted camera; free flight has none of this)`),
-    row('simulation ms', `p95 ${ms(d.sim.p95)}  mean ${d.sim.mean.toFixed(4)}  (one stepShip a frame, in the processor time; budget 2)`),
+    row('  scripted path', `${spread(d.pose)}  (placing the ship on the scripted path; free flight has none of this)`),
+    row('simulation ms', `p95 ${ms(d.sim.p95)}  mean ${d.sim.mean.toFixed(4)}  (one ship only, in the processor time; not the game's simulation budget)`),
     row('graphics ms', d.hasTimer
       ? `${spread(d.gpu)}  (${d.gpuSamples} of ${d.frames} frames timed; budget 8)`
       : 'n/a (this browser gives no timer queries)'),
     row('peak', `tiles ${d.tilesPeak}  triangles ${d.trisPeak}  pending builds ${d.pendingPeak}`),
     row('tile build ms', `mean ${ms(d.buildMean)}  worst ${ms(d.buildMax)}  (${d.builds} builds since the page opened)`),
     row('clock', `timer step ${d.timerStep.toFixed(3)} ms: a single time is only that exact`),
-    ...tail(i),
+    ...tail(i.notes),
   ].join('\n');
 }
+
+/** How far the flicker figure can be trusted. */
+const FLICKER_NOTES: readonly string[] = [
+  'flicker is for comparing modes: read it beside the change rate; the eye decides the look',
+  'screen-fixed speckle and crawl are not counted',
+  'lower or boosted flight moves the ground more than this path does',
+];
+const NO_POP = 'worker tile arrival pop is not included; judge popping during descent by eye';
 
 export function formatFlicker(i: RunInfo, rows: readonly FlickerRow[]): string {
   const pc = (x: number): string => (x * 100).toFixed(3);
   const sorted = [...rows].sort((a, b) => PHASES.indexOf(a.phase) - PHASES.indexOf(b.phase) || a.mode - b.mode);
-  const line = (c: string[]): string => c[0].padEnd(10) + c[1].padEnd(6) + c[2].padStart(6) + c.slice(3).map(v => v.padStart(14)).join('');
+  const line = (c: string[]): string => c[0].padEnd(10) + c[1].padEnd(10) + c[2].padStart(6) + c.slice(3).map(v => v.padStart(14)).join('');
   const frames = Math.max(...rows.map(r => r.frames));
   return [
     ...head('flicker report', i),
-    row('run', `${stretch(frames)}, 1/60 s of path per frame, ${i.tiles}`),
+    row('run', `${stretch(frames)}, 1/60 s of path per frame, ${tilesBuilt(i)}`),
     '',
     'Percent of all character cells, per frame.',
     '  flicker: the cell shows something else for exactly one frame.  change: it differs from the frame before.',
-    '  mode 0 dithered (key 1), mode 1 plain (key 2), mode 2 held (key 3).',
+    `  mode: ${MODE_NAMES.map((_, stab) => modeLabel(stab)).join(', ')}.`,
     '',
     line(['phase', 'mode', 'frames', 'flicker mean', 'flicker p95', 'change mean', 'change p95']),
-    ...sorted.map(r => line([r.phase, String(r.mode), String(r.frames), pc(r.flickerMean), pc(r.flickerP95), pc(r.changeMean), pc(r.changeP95)])),
-    ...tail(i),
+    ...sorted.map(r => line([r.phase, MODE_NAMES[r.mode], String(r.frames), pc(r.flickerMean), pc(r.flickerP95), pc(r.changeMean), pc(r.changeP95)])),
+    ...tail([...FLICKER_NOTES, ...(i.sync ? [NO_POP] : []), ...i.notes]),
   ].join('\n');
 }

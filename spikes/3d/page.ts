@@ -1,4 +1,5 @@
 /** What every view of the prototype page shares: URL parameters, the planet, the canvas and its renderer. */
+import { watchContext } from './lost';
 import { type Planet, makePlanet } from './planet';
 import { Renderer3 } from './render';
 
@@ -16,6 +17,8 @@ export interface Page {
   canvas: HTMLCanvasElement; info: HTMLPreElement; planet: Planet; renderer: Renderer3; sync: boolean; gpuName: string;
   /** Rebuilds the drawing if the window size or the display scale (browser zoom) changed; true if it did. */
   fit(): boolean;
+  /** True once the graphics context is gone: the loop must stop. The page then asks for a reload. */
+  lost(): boolean;
 }
 
 export function openPage(sync: boolean): Page {
@@ -32,5 +35,12 @@ export function openPage(sync: boolean): Page {
     renderer.resize(cssW, cssH, dpr);
     return true;
   };
-  return { canvas, info, planet: makePlanet(1), renderer, sync, gpuName, fit };
+  const told = watchContext(canvas, text => {
+    const panel = element('lost');
+    panel.textContent = text; panel.hidden = false;
+    if (document.pointerLockElement) document.exitPointerLock();
+  });
+  // the context says it is lost before the event arrives: a frame in between must not run either
+  const lost = (): boolean => told() || gl.isContextLost();
+  return { canvas, info, planet: makePlanet(1), renderer, sync, gpuName, fit, lost };
 }

@@ -1,6 +1,7 @@
 /** The two reports in the browser. ?auto=perf flies the scripted path and times it; ?auto=flicker draws it in each
  *  stability mode and counts changing characters. &secs=N runs only the first N seconds of each phase. The result is
  *  shown as text (C copies it) and logged; the title becomes 'done'. A change of window size starts the run again. */
+import { modeLabel } from './controls';
 import { type Page, element, params, stabParam } from './page';
 import { pathFocus } from './path';
 import { type ReportWindow, type RunInfo, formatFlicker, formatPerf, reportWindows } from './report';
@@ -38,7 +39,7 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
     if (!at) return;
     const w = windows[at.window];
     info.textContent =
-      `${kind} run: ${w.phase}${kind === 'flicker' ? `, mode ${w.mode}` : ''}  (part ${at.window + 1} of ${windows.length})  ` +
+      `${kind} run: ${w.phase}${kind === 'flicker' ? `, mode ${modeLabel(w.mode)}` : ''}  (part ${at.window + 1} of ${windows.length})  ` +
       (at.frame < 0 ? 'waiting for the ground to load' : `frame ${at.frame + 1} of ${w.frames}`) + '\n' +
       `canvas ${renderer.W}x${renderer.H}  grid ${renderer.cols}x${renderer.rows}\n` +
       'Keep this tab in front. A change of window size (F11, zoom) starts the run again.';
@@ -56,7 +57,7 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
       browser: navigator.userAgent, gpu: page.gpuName, W: renderer.W, H: renderer.H, cssW: innerWidth, cssH: innerHeight,
       dpr: window.devicePixelRatio, cols: renderer.cols, rows: renderer.rows,
       scale: Object.entries(SCALE).map(([k, v]) => `${k} ${v}`).join('  '),
-      tiles: sync ? 'tiles built on the main thread' : 'tiles built by background workers', notes,
+      sync, notes,
     };
     text = perf ? formatPerf(about, perf.data()) : formatFlicker(about, flicker!.rows);
     element('reportText').textContent = text;
@@ -81,6 +82,7 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
   });
 
   function tick(now: number): void {
+    if (page.lost()) return;
     const t0 = performance.now();
     if (page.fit()) { resized++; start(); }
     if (wasHidden && !document.hidden) { wasHidden = false; hidden++; start(); }

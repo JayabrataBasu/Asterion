@@ -22,6 +22,8 @@
   #note{color:#fb6;white-space:pre-wrap}
   #report{font-size:13px;line-height:1.4;user-select:text}
   #reportHint{margin-top:10px;color:#ffd75f;white-space:pre-wrap}
+  /* at the top, so that a finished report stays readable under it */
+  #lost{top:8px;transform:translateX(-50%);z-index:4;font:15px/1.4 monospace;color:#fb6;white-space:pre}
 </style>
 </head>
 <body>
@@ -43,12 +45,14 @@ Shift   boost (while thrusting)
 Y       cruise on / off: fast travel high above the planet,
         ends by itself near it
 H       level horizon on / off (acts inside the atmosphere)
-1 2 3   stability mode: 1 dithered, 2 plain, 3 held (start)
+1 2 3   stability mode: 1 dithered (stab=0), 2 plain (stab=1),
+        3 held (stab=2, the start)
 B       back to the start in space
 P       show / hide the figures
 
 Reports: add ?auto=perf or ?auto=flicker to the address.</pre>
 <pre id="note"></pre></div>
+<div id="lost" class="panel" role="alert" hidden></div>
 <div id="report" class="panel" hidden><pre id="reportText"></pre><pre id="reportHint">Press C to copy this report.</pre></div>
 <script type="module" src="./main.ts"></script>
 </body>

@@ -108,6 +108,8 @@ export interface MeasureResult {
   gpuSamples: number; gpuMissing: number;
   /** Frames whose interval passed SLOW_MS: missed at least one display refresh at 60 Hz. */
   slowFrames: number;
+  /** Sum of the intervals: the time the window took. */
+  totalMs: number;
   /** Interval between frame callbacks, whole-callback processor time, graphics time; all ms. */
   frame: Spread; tick: Spread; gpu: Spread;
 }
@@ -134,7 +136,7 @@ export class Measure {
     const g = [...this.gpuMs.values()];
     return {
       frames: this.interval.length, gpuSamples: g.length, gpuMissing: this.interval.length - g.length,
-      slowFrames: this.interval.filter(v => v > SLOW_MS).length,
+      slowFrames: this.interval.filter(v => v > SLOW_MS).length, totalMs: this.interval.reduce((a, b) => a + b, 0),
       frame: spread(this.interval), tick: spread(this.tickMs), gpu: spread(g),
     };
   }

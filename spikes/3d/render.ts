@@ -11,7 +11,7 @@ import { type Planet, atmoDensity } from './planet';
 import { SCALE } from './scale';
 import * as S from './shaders';
 import {
-  TILE_N, type TileId, type TileMesh, buildTile, faceDir, resolveDrawList, selectTiles, tileIndices, tileKey,
+  TILE_N, type TileId, type TileMesh, buildTile, faceDir, finestDepth, resolveDrawList, selectTiles, tileIndices, tileKey,
 } from './tiles';
 import { FrameTimer, type QueryApi, shownGpuMs } from './timing';
 import type { TileReply, TileRequest } from './worker';
@@ -20,8 +20,9 @@ export interface Frame3 {
   camPos: Vec3; camQ: Quat;
   ship: { pos: Vec3; q: Quat } | null;
   planet: Planet; time: number;
-  /** Stability mode: 0 plain, with a screen-pattern dither on the bands; 1 characters from material and band only;
-   *  2 as 1, a cell changing band only once its luminance passes the edge by HOLD (see keepsHistory). */
+  /** Stability mode (see MODE_NAMES): 0 dithered, a screen-pattern dither on the bands; 1 plain, characters from
+   *  material and band only; 2 held, as plain, a cell changing band only once its luminance passes the edge by HOLD
+   *  (see keepsHistory). */
   stab: 0 | 1 | 2;
 }
 
@@ -29,15 +30,17 @@ export interface Frame3 {
 export const FOV_Y = Math.PI / 3;
 const NEAR = 0.5; // as viewProj
 const FAR = 1e8; // log depth reaches 1 here
-const MAX_TILES = 768; // GPU slots, and the bound of the tile cache
+/** GPU slots, and the bound of the tile cache: more than the wanted tiles and their ancestors ever are near the
+ *  ground, which is up to about 430 at depth 6 and 810 at depth 10. */
+export const MAX_TILES = 1024;
 const VERTS = (TILE_N + 1) ** 2 + 4 * TILE_N;
 const ROCKS = 150, ROCK_KINDS = 4;
 const UPLOADS_PER_FRAME = 12;
 const BLOOM_LEVELS = 5;
 const ZERO4 = new Float32Array(4), ONE1 = new Float32Array([1]);
-/** Mode 0: peak-to-peak luminance dither on the bands, the size of the 2D game's ramp dither. */
+/** Dithered mode: peak-to-peak luminance dither on the bands, the size of the 2D game's ramp dither. */
 const DITHER = 0.09;
-/** Mode 2: how far past a band edge the luminance must be before the cell changes band. */
+/** Held mode: how far past a band edge the luminance must be before the cell changes band. */
 const HOLD = 0.05;
 /** Resolve glyph table: index order matches the G_* defines in shaders.ts. */
 /** Pass names for the per-pass profile. */
@@ -559,7 +562,7 @@ export class Renderer3 {
 
     if (this.dirty) {
       this.queueDirty = true;
-      this.drawList = resolveDrawList(this.wanted, has).map(t => this.cache.get(tileKey(t))!);
+      this.drawList = resolveDrawList(this.wanted, has, finestDepth(p)).map(t => this.cache.get(tileKey(t))!);
       this.listVersion++;
       this.dirty = false;
     }

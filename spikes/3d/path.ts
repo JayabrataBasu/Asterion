@@ -1,5 +1,5 @@
 /** The scripted flight: 60 seconds of approach, descent, low flight with banked turns and climb, as a pure function
- *  of time and planet, with the chase camera.
+ *  of time and planet, with a camera fixed straight behind the ship (the reports ease their own: see runs.ts).
  *
  *  Altitudes are above surfaceRadius, averaged along the track over RELIEF_WINDOW seconds either side: following
  *  every bump exactly would bob the camera, and the flicker measure would then count the bobbing. */
@@ -183,7 +183,7 @@ function profile(p: Planet, t: number, phase: number): { alt: number; pitch: num
 /** The ground direction under the start of the low flight: where scenery goes. */
 export function pathFocus(p: Planet): Vec3 { return { ...track(p).start }; }
 
-/** Ship and chase camera `t` seconds along the path (clamped to it). Returns new objects. */
+/** Ship, and the camera straight behind it, `t` seconds along the path (clamped to it). Returns new objects. */
 export function pose(t: number, p: Planet): PathPose {
   const time = Math.min(PATH_SECONDS, Math.max(0, t));
   const phase = Math.min(PHASES.length - 1, Math.floor(time / PHASE_S));

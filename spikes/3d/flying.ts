@@ -1,7 +1,7 @@
 /** Free flight in the browser: mouse capture, keys, the loop, reticle, pause screen and readout. The rules are in
  *  controls.ts, session.ts and camera.ts. The title becomes 'ready' once the first tiles are all drawn. */
 import { ChaseCamera } from './camera';
-import { type Action, Controls, isGameKey } from './controls';
+import { type Action, Controls, isGameKey, modeLabel } from './controls';
 import { len } from './math';
 import { type Page, element, stabParam } from './page';
 import { pathFocus } from './path';
@@ -11,7 +11,6 @@ import { FlightSession } from './session';
 const READOUT_MS = 250;
 /** The reticle circle's radius on screen, as a share of the window's shorter side. */
 const RETICLE_SCREEN = 0.25;
-const MODE_NAMES = ['dithered', 'plain', 'held'];
 const REFUSED = 'The browser did not capture the mouse. Click again.\n(Just after Esc it refuses for about a second.)';
 
 export function fly(page: Page): void {
@@ -32,7 +31,7 @@ export function fly(page: Page): void {
   };
   const refused = (): void => { note.textContent = REFUSED; };
   canvas.addEventListener('click', () => {
-    if (document.pointerLockElement === canvas) return;
+    if (document.pointerLockElement === canvas || page.lost()) return;
     note.textContent = '';
     // a promise in current browsers, nothing in some older ones
     (canvas.requestPointerLock() as Promise<void> | undefined)?.catch(refused);
@@ -85,12 +84,13 @@ export function fly(page: Page): void {
       `${figures}   graphics ${gpu}\n` +
       `tiles ${st.tiles}   triangles ${st.tris}   pending builds ${st.pending}\n` +
       `altitude ${s.alt.toFixed(0)}   speed ${len(s.vel).toFixed(0)}   boost ${Math.max(0, s.boostE).toFixed(0)}\n` +
-      `mode ${frame.stab} ${MODE_NAMES[frame.stab]} (key ${frame.stab + 1})   level ${s.level ? 'on' : 'off'}   ` +
+      `mode ${modeLabel(frame.stab)}   level ${s.level ? 'on' : 'off'}\n` +
       `cruise ${s.cruising ? 'ON' : 'off'}${controls.paused ? '   PAUSED' : ''}   P hides this` +
       (renderer.profile ? '\npasses ms: ' + PASSES.map((n, i) => `${n} ${renderer.passMs[i].toFixed(2)}`).join('  ') : '');
   }
 
   function tick(now: number): void {
+    if (page.lost()) return;
     const t0 = performance.now();
     const seconds = prevNow ? (now - prevNow) / 1000 : 0;
     prevNow = now;

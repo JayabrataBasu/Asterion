@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { v3 } from './math';
-import { type TileId, tileKey } from './tiles';
-import { type HistoryKey, beyondHorizon, evictKeys, inView, keepsHistory, requestOrder } from './render';
+import { addScaled, norm, v3 } from './math';
+import { makePlanet, surfaceRadius } from './planet';
+import { SCALE } from './scale';
+import { type TileId, faceDir, finestDepth, selectTiles, tileKey } from './tiles';
+import { type HistoryKey, MAX_TILES, beyondHorizon, evictKeys, inView, keepsHistory, requestOrder } from './render';
 
 describe('keepsHistory (stability history between frames)', () => {
   const key = (o: Partial<HistoryKey> = {}): HistoryKey =>
@@ -111,5 +113,32 @@ describe('evictKeys', () => {
     const entries = [{ key: 1, last: 0 }, { key: 2, last: 0 }];
     expect(evictKeys(entries, new Set(), 2)).toEqual([]);
     expect(evictKeys(entries, new Set([1, 2]), 0)).toEqual([]);
+  });
+});
+
+describe('tile cache size', () => {
+  it('holds every wanted tile and ancestor near the ground, also at the finest depth', () => {
+    const radiusK = SCALE.radiusK;
+    try {
+      SCALE.radiusK = 2400;
+      const p = makePlanet(1);
+      expect(finestDepth(p)).toBe(10);
+      // face centres, cube edges and corners, and places between
+      const dirs = [0, 1, 2, 3, 4, 5].flatMap(f =>
+        [[0, 0], [1, 1], [1, 0], [0.5, 0.5], [0.01, 0.01], [-0.33, 0.71]].map(([u, w]) => faceDir(v3(), f, u, w)));
+      dirs.push(...Array.from({ length: 40 }, (_, i) => norm(v3(), v3(Math.sin(i * 7.1), Math.sin(i * 3.7), Math.cos(i * 5.3)))));
+      let most = 0;
+      for (const d of dirs) for (const alt of [0, 150, 600]) {
+        const keep = new Set<number>();
+        for (const t of selectTiles(p, addScaled(v3(), p.center, d, surfaceRadius(p, d) + alt))) {
+          for (let up = 0; up <= t.depth; up++) {
+            keep.add(tileKey({ face: t.face, depth: t.depth - up, ix: t.ix >> up, iy: t.iy >> up }));
+          }
+        }
+        most = Math.max(most, keep.size);
+      }
+      expect(most).toBeGreaterThan(768); // the size that was enough for depth 6
+      expect(most).toBeLessThanOrEqual(MAX_TILES);
+    } finally { SCALE.radiusK = radiusK; }
   });
 });

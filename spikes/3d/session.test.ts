@@ -111,7 +111,7 @@ describe('pause', () => {
 describe('drawn state', () => {
   it('lies between the previous and the current step, by the unused share of a step', () => {
     const { s, c } = make();
-    c.keyDown('KeyW'); c.mouseMove(250, 0);
+    c.keyDown('KeyW'); c.mouseMove(125, 0); c.mouseMove(125, 0); // the reticle to the rim
     for (let i = 0; i < 30; i++) s.advance(DT, c);
     s.advance(DT * 1.25, c);
     const { pos, prevPos } = s.ship;
