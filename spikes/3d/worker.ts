@@ -1,11 +1,13 @@
-/** Builds tiles off the main thread: one TileRequest in, one TileMesh out, its buffers transferred. */
+/** Builds tiles off the main thread: one TileRequest in, one TileReply out, its buffers transferred. */
 import { type Planet, makePlanet } from './planet';
 import { SCALE } from './scale';
-import { type TileId, buildTile } from './tiles';
+import { type TileId, type TileMesh, buildTile } from './tiles';
 
 /** `scale` is the page's SCALE: a worker cannot see the page's URL overrides, and the mesh must agree with collision.
  *  The planet is centred on the origin. */
 export interface TileRequest { seed: number; radius2d: number; scale: typeof SCALE; id: TileId }
+/** The mesh, and how long building it took in the worker, in milliseconds. */
+export type TileReply = TileMesh & { buildMs: number };
 
 let planet: Planet | undefined, madeFrom = '';
 
@@ -17,6 +19,8 @@ self.onmessage = (e: MessageEvent<TileRequest>) => {
     planet = makePlanet(seed, radius2d);
     madeFrom = from;
   }
-  const mesh = buildTile(planet, id);
+  const start = performance.now();
+  const mesh: TileReply = { ...buildTile(planet, id), buildMs: 0 };
+  mesh.buildMs = performance.now() - start;
   self.postMessage(mesh, { transfer: [mesh.pos.buffer, mesh.nrm.buffer, mesh.mat.buffer] });
 };

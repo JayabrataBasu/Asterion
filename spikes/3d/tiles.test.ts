@@ -438,7 +438,9 @@ describe('tile worker', () => {
     const scale = { ...SCALE, radiusK: 90, reliefFrac: 0.05 };
     const { mesh, transfer } = send({ seed: 3, radius2d: 30, scale, id });
     Object.assign(SCALE, scale);
-    expect(mesh).toEqual(buildTile(makePlanet(3, 30), id));
+    const { buildMs, ...built } = mesh as TileMesh & { buildMs: number };
+    expect(built).toEqual(buildTile(makePlanet(3, 30), id));
+    expect(buildMs).toBeGreaterThanOrEqual(0);
     expect(transfer).toEqual([mesh.pos.buffer, mesh.nrm.buffer, mesh.mat.buffer]);
   });
 
