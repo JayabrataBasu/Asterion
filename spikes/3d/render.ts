@@ -213,10 +213,16 @@ export class Renderer3 {
 
   private timerExt: { TIME_ELAPSED_EXT: number; GPU_DISJOINT_EXT: number } | null = null;
 
+  /** Timer queries each graphics timer may have in flight. */
+  private readonly timerDepth: number;
+
   /** `swarm`: the most other ships, bolts and particles a frame will bring (none: no swarm is drawn). `world`: the
-   *  world scene, if the page shows one. */
-  constructor(readonly canvas: HTMLCanvasElement, opts: { sync: boolean; swarm?: Capacity | null; world?: World | null }) {
+   *  world scene, if the page shows one. `timers`: timer queries in flight (default 6; a run without a frame limit
+   *  needs more, or most frames go untimed). */
+  constructor(readonly canvas: HTMLCanvasElement,
+    opts: { sync: boolean; swarm?: Capacity | null; world?: World | null; timers?: number }) {
     this.sync = opts.sync;
+    this.timerDepth = opts.timers ?? 6;
     const gl = canvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
     if (!gl) throw new Error('WebGL2 not available');
     this.gl = gl;
@@ -943,8 +949,9 @@ export class Renderer3 {
     if (!ext) return;
     if (!this.frameTimer) {
       const api = this.queryApi(ext);
-      this.frameTimer = new FrameTimer(api, 6);
-      this.passTimers = this.passNames.map(() => new FrameTimer(api, 6));
+      const depth = this.timerDepth, wait = Math.max(60, 4 * depth); // frames before a query is given up
+      this.frameTimer = new FrameTimer(api, depth, wait);
+      this.passTimers = this.passNames.map(() => new FrameTimer(api, depth, wait));
     }
     if (!this.profile) this.frameTimer.begin(this.frameNo);
   }

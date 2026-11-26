@@ -54,6 +54,7 @@ export function runReport(page: Page, kind: 'perf' | 'flicker'): void {
     if (hidden) notes.push(`started again ${hidden} time(s) after the tab was hidden`);
     if (run.unsettled) notes.push(`${run.unsettled} part(s) began before all tiles had loaded`);
     if (renderer.profile) notes.push('profile=1 is on: graphics frame times are not sampled');
+    if (params.has('timers')) notes.push(`timers=${params.get('timers')}: that many timer queries may be in flight (6 without it)`);
     const about: RunInfo = {
       browser: navigator.userAgent, gpu: page.gpuName, W: renderer.W, H: renderer.H, cssW: innerWidth, cssH: innerHeight,
       dpr: window.devicePixelRatio, cols: renderer.cols, rows: renderer.rows,

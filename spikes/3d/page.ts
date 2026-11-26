@@ -35,7 +35,8 @@ export function openPage(sync: boolean, room?: Capacity): Page {
   const combat = parseCombat(params);
   // the occlusion check places its own objects round the default planet
   const world = makeWorld(room ? null : parseWorldScene(params));
-  const renderer = new Renderer3(canvas, { sync, swarm: room ?? combat, world: world.scene ? world : null });
+  const timers = intParam('timers', 6, 600, 6);
+  const renderer = new Renderer3(canvas, { sync, swarm: room ?? combat, world: world.scene ? world : null, timers });
   renderer.debug = intParam('dbg', 0, 1, 0);
   renderer.profile = params.get('profile') === '1'; // graphics time per pass
   const gl = renderer.gl, dbg = gl.getExtension('WEBGL_debug_renderer_info');
