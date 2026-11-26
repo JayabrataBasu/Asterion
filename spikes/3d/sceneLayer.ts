@@ -7,6 +7,7 @@ import type { Planet } from './planet';
 import { FS_GAS, FS_RESOLVE_GAS } from './sceneShaders';
 import type { World } from './world';
 import { MoonLayer } from './moonLayer';
+import { RingLayer } from './ringLayer';
 import type { evictKeys, requestOrder } from './render';
 
 export type Loc = Record<string, WebGLUniformLocation | null>;
@@ -102,5 +103,6 @@ class GasLayer implements SceneLayer {
 
 export function makeSceneLayer(world: World, kit: LayerKit): SceneLayer | null {
   if (world.moon) return new MoonLayer(kit, world.moon);
+  if (world.ring) return new RingLayer(kit, world.ring);
   return world.scene === 'gas' ? new GasLayer(kit) : null;
 }

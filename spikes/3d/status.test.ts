@@ -32,4 +32,13 @@ describe('the scene line of the readout', () => {
     s.pos.y += 5000;
     expect(sceneStatus(world, s, 0).line).toContain('not carried');
   });
+
+  it('gives the height over the ring\'s plane and the hull chips', () => {
+    const world = makeWorld('ring'), s = newShip(), ring = world.ring!;
+    ring.toWorld(s.pos, 0, 12000, 40);
+    s.chips = 2;
+    expect(sceneStatus(world, s, 0)).toEqual({ line: 'ring: 40 above its plane, within its width   hull chips 2', warning: '' });
+    ring.toWorld(s.pos, 0, 30000, -700);
+    expect(sceneStatus(world, s, 0).line).toBe('ring: 700 below its plane, outside its width   hull chips 2');
+  });
 });

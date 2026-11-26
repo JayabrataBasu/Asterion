@@ -1,7 +1,7 @@
 /** GLSL for the world scenes. The default planet's shaders are not touched: a scene's resolve pass is a copy of
  *  FS_RESOLVE with a few lines changed, as FS_ASCII3 is of FS_ASCII. */
 import { NOISE } from '../../src/gfx/shaders';
-import { FS_RESOLVE, FS_WORLD, SUN } from './shaders';
+import { FS_RESOLVE, FS_WORLD, SUN, VS_ROCK } from './shaders';
 
 const LOGDEPTH = `
 uniform float uFC;
@@ -172,3 +172,106 @@ export const FS_MOON = swap(swap(FS_WORLD,
   }
   else if (vMat == 4) alb = vCol;
 `);
+
+// ------------------------------------------------------------------ rings
+
+/** Ring rocks: VS_ROCK, passing on the rock's size. */
+export const VS_RING_ROCK = swap(swap(VS_ROCK,
+  'uniform mat4 uVP;\n', 'uniform mat4 uVP;\nflat out float vSize;\n'),
+  '  vec3 local = rot(aI1, aPos);\n', '  vSize = aI0.w;\n  vec3 local = rot(aI1, aPos);\n');
+
+/** Ring rocks: FS_WORLD with facets shown while a rock is large enough on screen, paler stone, and the planet's
+ *  shadow. uCentre is the planet's centre relative to the camera. */
+export const FS_RING_ROCK = swap(swap(swap(swap(swap(FS_WORLD,
+  'vec3 c = alb * (0.02 + 1.05 * diff * day)', 'vec3 c = alb * (0.16 + 1.05 * diff * day)'), // light off the ring around
+  'const float RELIEF_GAIN = 6.0;', 'const float RELIEF_GAIN = 1.0;\nflat in float vSize;\nuniform vec3 uCentre;'),
+  'float k = smoothstep(0.35, 0.7, uSpacing / cell);', 'float k = smoothstep(0.35, 0.7, vSize * 0.6 / cell);'),
+  'if (vMat == 4) alb = vCol;', 'if (vMat == 4) alb = vCol * vec3(1.45, 1.42, 1.35);'),
+  'float day = vMat == 4 ? 1.0 : smoothstep(-0.12, 0.12, dot(vRad, L));',
+  `vec3 rp = vRel - uCentre; float along = dot(rp, L);
+  float day = along > 0.0 ? 1.0 : smoothstep(uR * 0.99, uR * 1.01, length(rp - L * along));`);
+
+/** The ring's haze, added to the resolve: a thin slab between two cylinders, its density across the width from a
+ *  mipmapped texture, so that far bands average instead of sparkling. It is kept at least as thick as a cell is wide
+ *  at the ring's distance, so that it shows edge-on, and fades out near the camera, where the rocks stand. */
+const RING_HAZE = `
+uniform sampler2D uDens;
+uniform vec3 uRingN;
+uniform float uRingIn, uRingOut, uCellK;
+#define FAM_RING 6
+const float DEPTH_LEN = 45.0;              // units of full density that hide all but 1/e of what is behind
+const vec2 RING_NEAR = vec2(600.0, 1800.0);  // the haze fades in over these distances
+
+float sunlit(vec3 p){                       // 0 in the planet's shadow
+  float along = dot(p, L);
+  return along > 0.0 ? 1.0 : smoothstep(uR * 0.99, uR * 1.01, length(p - L * along));
+}
+
+/** How much of the ray along d, up to tmax, the haze covers; its colour in col. */
+float ringHaze(vec3 d, float tmax, out vec3 col){
+  col = vec3(0.0);
+  float h0 = dot(uEye, uRingN), dh = dot(d, uRingN);
+  vec3 foot0 = uEye - uRingN * h0, dp = d - uRingN * dh;
+  float thick = max(50.0, 0.45 * max(length(foot0) - uRingOut, abs(h0)) * uCellK);
+  float a = 0.0, b = tmax;
+  if (abs(dh) < 1e-7) { if (abs(h0) > thick) return 0.0; }
+  else {
+    float t0 = (-thick - h0) / dh, t1 = (thick - h0) / dh;
+    a = max(a, min(t0, t1)); b = min(b, max(t0, t1));
+  }
+  float A = dot(dp, dp), B = dot(foot0, dp);
+  if (A < 1e-9) return 0.0;
+  float disc = B * B - A * (dot(foot0, foot0) - uRingOut * uRingOut);
+  if (disc <= 0.0) return 0.0;
+  a = max(a, (-B - sqrt(disc)) / A); b = min(b, (-B + sqrt(disc)) / A);
+  if (b <= a) return 0.0;
+  vec2 near_ = vec2(a, b), far_ = vec2(1.0, 0.0);   // the hole inside the inner radius leaves two pieces
+  disc = B * B - A * (dot(foot0, foot0) - uRingIn * uRingIn);
+  if (disc > 0.0) { near_ = vec2(a, min(b, (-B - sqrt(disc)) / A)); far_ = vec2(max(a, (-B + sqrt(disc)) / A), b); }
+  float through = 1.0, texel = (uRingOut - uRingIn) / 1024.0;
+  float side = h0 * dot(uRingN, L) > 0.0 ? 1.0 : 0.55;   // the side away from the sun is dimmer
+  for (int piece = 0; piece < 2; piece++) {
+    vec2 s = piece == 0 ? near_ : far_;
+    if (s.y <= s.x) continue;
+    float ds = (s.y - s.x) / 4.0;
+    for (int i = 0; i < 4; i++) {
+      float t = s.x + (float(i) + 0.5) * ds;
+      vec3 p = uEye + d * t;
+      float rho = length(p - uRingN * dot(p, uRingN)), share = (rho - uRingIn) / (uRingOut - uRingIn);
+      // the width one sample stands for: a cell's footprint, stretched at a grazing angle, or the step along the ray
+      float wide = max(t * uCellK / max(abs(dh), 0.25), min(ds * sqrt(A), 600.0));
+      float dens = textureLod(uDens, vec2(share, 0.5), log2(max(wide / texel, 1.0))).r;
+      float tau = dens * ds * (50.0 / thick) / DEPTH_LEN * smoothstep(RING_NEAR.x, RING_NEAR.y, t);
+      float cover = 1.0 - exp(-tau);
+      vec3 tint = mix(vec3(0.55, 0.40, 0.30), vec3(0.95, 0.84, 0.62), smoothstep(0.05, 0.6, share));
+      tint = mix(tint, vec3(0.62, 0.66, 0.74), smoothstep(0.72, 0.95, share));
+      col += through * cover * tint * (0.10 + 0.80 * dens) * side * mix(0.10, 1.0, sunlit(p));
+      through *= 1.0 - cover;
+    }
+  }
+  float cover = 1.0 - through;
+  col *= mix(0.45, 1.0, smoothstep(60.0, 700.0, abs(h0))) / max(cover, 1e-4);   // dimmer seen from within
+  return cover;
+}
+
+/** Lays the haze over a resolved cell. */
+void overRing(inout vec3 rgb, inout float glyph, vec3 d, float tmax, ivec2 cell){
+  vec3 col;
+  float cover = ringHaze(d, tmax, col);
+  if (cover <= 0.0) return;
+  rgb = mix(rgb, col, cover);
+  if (cover > 0.3) {
+    float lum = dot(rgb, vec3(0.2126, 0.7152, 0.0722));
+    glyph = lum >= 0.02 ? banded(FAM_RING, lum, cell) : 0.0;
+  }
+}
+`;
+
+/** The resolve for the ring scene: FS_RESOLVE with the haze laid over sky and surfaces, in its own character
+ *  family. */
+export const FS_RESOLVE_RING = swap(swap(swap(swap(FS_RESOLVE,
+  'vec3 g = fam == FAM_HAZE ? vec3(G_COMMA, G_COLON, G_SEMI) :',
+  'vec3 g = fam == 6 ? vec3(G_DOT, G_DASH, G_EQ) : fam == FAM_HAZE ? vec3(G_COMMA, G_COLON, G_SEMI) :'),
+  '\nvoid main(){', RING_HAZE + '\nvoid main(){'),
+  '// dense haze\n    o = vec4(rgb, glyph);', '// dense haze\n    overRing(rgb, glyph, dir, 1e9, cell);\n    o = vec4(rgb, glyph);'),
+  '    rgb *= 1.15;\n  }\n', '    rgb *= 1.15;\n  }\n  overRing(rgb, glyph, dir, w * vlen, cell);\n');

@@ -4,10 +4,11 @@
 import { CHASE } from './camera';
 import type { ShipState, Surroundings } from './flight';
 import {
-  type Quat, type Vec3, add, addScaled, cross, dot, norm, qAxisAngle, qFromBasis, qIdentity, qMul, qNorm, qRotate, scale,
-  sub, v3,
+  type Quat, type Vec3, add, addScaled, cross, dot, norm, qAxisAngle, qFromBasis, qIdentity, qMul, qNorm, qRotate,
+  qSlerp, scale, sub, v3,
 } from './math';
 import { PATH_SECONDS, type PathPose, type Phase, pathFocus, pose } from './path';
+import { CELL, type Ring } from './ring';
 import { CARRY_RADII, type Moon, ORBIT_NORMAL, ORBIT_START, moonPosition } from './moon';
 import { type Planet, surfaceRadius } from './planet';
 import { SUN } from './shaders';
@@ -265,7 +266,70 @@ function moonScene(world: World, moon: Moon): Scene {
   };
 }
 
+// The ring's path runs along a plane between two rows of cells, where no rock can be, so it needs no steering: along
+// e1 at this v (in the densest band), and between the two layers (h = 0) in the middle of the low pass.
+const RING_V = 210 * CELL;
+const RING_LOW = 65, RING_SPEED = 60;
+
+function ringScene(world: World, ring: Ring): Scene {
+  const p = world.planet;
+  const at = (u: number, v: number, h: number): Vec3 => ring.toWorld(v3(), u, v, h);
+  /** At `pos`, nose at `to`. */
+  const looking = (pos: Vec3, to: Vec3, phase: Phase = 'approach'): PathPose =>
+    lookPose(pos, sub(v3(), to, pos), ring.n, 0, 0, phase);
+  const along = (u: number, h: number, pitch: number, phase: Phase): PathPose =>
+    lookPose(at(u, RING_V, h), ring.e1, ring.n, pitch, 0, phase);
+  /** Above or below the plane in the direction `up` (0: in it, 1: square to it), `far` from the centre. */
+  const out = (up: number, far: number): Vec3 => add(v3(), p.center,
+    scale(v3(), norm(v3(), addScaled(v3(), scale(v3(), ring.e2, 1 - up), ring.n, up)), far));
+
+  const from = looking(out(0.4, 40000), p.center), entry = along(-1100, 600, -20 * DEG, 'approach');
+  function approach(u: number): PathPose {
+    const a = from.shipPos, b = entry.shipPos, m = RING_SPEED * PHASE_S;
+    const shipPos = v3(hermite(a.x, 0, b.x, m * ring.e1.x, u), hermite(a.y, 0, b.y, m * ring.e1.y, u),
+      hermite(a.z, 0, b.z, m * ring.e1.z, u));
+    const shipQ = qSlerp(qIdentity(), from.shipQ, entry.shipQ, smooth(u));
+    return { camPos: add(v3(), shipPos, qRotate(v3(), shipQ, CHASE)), camQ: { ...shipQ }, shipPos, shipQ, phase: 'approach' };
+  }
+  /** Height through the low pass: down into the field, level between its layers, up again. */
+  const dip3 = (u: number): number => u < 1 / 3 ? 1 - smooth(3 * u) : u > 2 / 3 ? smooth(3 * u - 2) : 0;
+
+  function pose(seconds: number): PathPose {
+    const t = Math.min(PATH_SECONDS, Math.max(0, seconds));
+    const phase = Math.min(PHASES.length - 1, Math.floor(t / PHASE_S)), u = (t - phase * PHASE_S) / PHASE_S;
+    const m = RING_SPEED * PHASE_S;
+    if (phase === 0) return approach(u);
+    if (phase === 1) return along(hermite(-1100, m, -450, m, u), hermite(600, 0, RING_LOW, 0, u), (-20 + 16 * smooth(u)) * DEG, 'descent');
+    if (phase === 2) {
+      const h = RING_LOW * dip3(u);
+      const climb = RING_LOW * (dip3(Math.min(1, u + 1e-4)) - dip3(Math.max(0, u - 1e-4))) / (2e-4 * PHASE_S);
+      return along(-450 + 900 * u, h, -4 * DEG + 0.5 * Math.atan(climb / RING_SPEED), 'low');
+    }
+    return along(hermite(450, m, 1100, 600, u), hermite(RING_LOW, 0, 700, 0, u), (-4 - 14 * smooth(u)) * DEG, 'climb');
+  }
+
+  const views: Record<string, () => PathPose> = {
+    far: () => looking(out(0.45, 55000), p.center),
+    mid: () => looking(at(-5000, ring.outer + 3000, 3200), at(0, RING_V - 2500, 0)),
+    inside: () => along(0, 140, -9 * DEG, 'low'),
+    close: () => pose(37.5),
+    edge: () => looking(out(0, 45000), p.center),
+    edgenear: () => looking(at(0, ring.outer + 2500, 0), p.center),
+  };
+  const focus = norm(v3(), sub(v3(), at(0, RING_V, 0), p.center));
+  return {
+    world, focus, pose, near: { ring },
+    view: name => Object.hasOwn(views, name) ? views[name]() : null,
+    start(ship) {
+      const here = along(-600, 350, -20 * DEG, 'approach');
+      Object.assign(ship.pos, here.shipPos); Object.assign(ship.prevPos, here.shipPos);
+      Object.assign(ship.q, here.shipQ); Object.assign(ship.prevQ, here.shipQ);
+    },
+  };
+}
+
 export function makeScene(world: World): Scene {
+  if (world.ring) return ringScene(world, world.ring);
   if (world.moon) return moonScene(world, world.moon);
   if (world.scene === 'gas') return gasScene(world);
   const p = world.planet;

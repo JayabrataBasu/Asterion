@@ -90,8 +90,9 @@ function hash(n: number): number {
   return (h >>> 0) / 4294967296;
 }
 
-/** A lumpy rock of about unit radius: a twice-split icosahedron pushed in and out by a seeded bump field. */
-export function rockMesh(seed: number): Mesh {
+/** A lumpy rock of about unit radius: an icosahedron, split `splits` times, pushed in and out by a seeded bump
+ *  field. Fewer splits give the same shape in fewer triangles. */
+export function rockMesh(seed: number, splits = 2): Mesh {
   const t = (1 + Math.sqrt(5)) / 2;
   let verts: P[] = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
     [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]];
@@ -100,7 +101,7 @@ export function rockMesh(seed: number): Mesh {
     [6, 2, 10], [8, 6, 7], [9, 8, 1]];
   const unit = (p: P): P => { const l = Math.hypot(...p); return [p[0] / l, p[1] / l, p[2] / l]; };
   verts = verts.map(unit);
-  for (let s = 0; s < 2; s++) {
+  for (let s = 0; s < splits; s++) {
     const mids = new Map<string, number>();
     const mid = (a: number, b: number): number => {
       const k = a < b ? `${a},${b}` : `${b},${a}`;

@@ -7,6 +7,7 @@ import { type Vec3, dot, len, norm, qRotate, scale, sub, v3 } from './math';
 import { PATH_SECONDS, type PathPose, pathFocus, pose } from './path';
 import { altitude, makePlanet } from './planet';
 import { moonPosition } from './moon';
+import { CELL, newRingRock } from './ring';
 import { makeScene } from './scene';
 import { SUN } from './shaders';
 import { makeWorld } from './world';
@@ -122,5 +123,74 @@ describe('the moon scene', () => {
     }
     const far = scene.view('far', 0)!, later = scene.view('far', 100)!;
     expect(len(sub(v3(), far.shipPos, centre(0)))).toBeCloseTo(len(sub(v3(), later.shipPos, centre(100))), 3);
+  });
+});
+
+describe('the ring scene', () => {
+  const world = makeWorld('ring'), scene = makeScene(world), p = world.planet, ring = world.ring!;
+  const all = frames(t => scene.pose(t));
+  const local = (q: Vec3): Vec3 => ring.toLocal(v3(), q);
+
+  /** The distance from `q` to the nearest rock's surface. */
+  const clearance = (q: Vec3): number => {
+    const l = local(q), rock = newRingRock();
+    let best = Infinity;
+    for (let i = -1; i <= 1; i++) {
+      for (let j = -1; j <= 1; j++) {
+        for (let k = 0; k < 2; k++) {
+          if (!ring.rockAt(Math.floor(l.x / CELL) + i, Math.floor(l.y / CELL) + j, k, rock)) continue;
+          best = Math.min(best, Math.hypot(l.x - rock.u, l.y - rock.v, l.z - rock.h) - rock.r);
+        }
+      }
+    }
+    return best;
+  };
+
+  it('flies a path from afar into the field and out: approach, descent, low among the rocks, climb', () => {
+    expect(len(sub(v3(), all[0].shipPos, p.center))).toBeGreaterThan(2 * ring.outer);
+    const low = all.filter(f => f.phase === 'low').map(f => local(f.shipPos));
+    expect(Math.max(...low.map(l => Math.abs(l.z)))).toBeLessThanOrEqual(66);
+    expect(low.filter(l => Math.abs(l.z) < 5).length).toBeGreaterThan(low.length / 4);
+    for (const l of low) expect(ring.density(Math.hypot(l.x, l.y))).toBeGreaterThan(0.5);
+    expect(local(all[all.length - 1].shipPos).z).toBeGreaterThan(500);
+    const near = low.length > 0 ? all.filter(f => f.phase === 'low' && clearance(f.shipPos) < 40).length : 0;
+    expect(near).toBeGreaterThan(100);
+  });
+
+  it('never touches a rock, with ship or camera, and moves smoothly', () => {
+    for (let i = 0; i < all.length; i++) {
+      expect(finitePose(all[i])).toBe(true);
+      expect(clearance(all[i].shipPos)).toBeGreaterThanOrEqual(SHIP_R - 0.01);
+      expect(clearance(all[i].camPos)).toBeGreaterThan(1);
+      expect(altitude(p, all[i].camPos)).toBeGreaterThan(SHIP_R);
+      if (i === 0) continue;
+      expect(turned(all[i - 1], all[i])).toBeLessThan(2);
+      if (all[i].phase !== 'approach') expect(len(sub(v3(), all[i].shipPos, all[i - 1].shipPos))).toBeLessThan(8);
+    }
+  });
+
+  it('starts free flight above the field, looking along and down into it', () => {
+    const s = newShip();
+    scene.start!(s);
+    const l = local(s.pos);
+    expect(l.z).toBeGreaterThan(100);
+    expect(l.z).toBeLessThan(600);
+    expect(ring.density(Math.hypot(l.x, l.y))).toBeGreaterThan(0.5);
+    const nose = qRotate(v3(), s.q, v3(0, 0, -1));
+    expect(dot(nose, ring.n)).toBeLessThan(-0.15);
+    expect(dot(nose, ring.n)).toBeGreaterThan(-0.6);
+    expect(s.prevPos).toEqual(s.pos);
+  });
+
+  it('has named views, the edge ones in the plane', () => {
+    for (const name of ['far', 'mid', 'close', 'inside', 'edge', 'edgenear']) {
+      const view = scene.view(name, 0)!;
+      expect(finitePose(view)).toBe(true);
+      expect(altitude(p, view.camPos)).toBeGreaterThan(SHIP_R);
+      expect(clearance(view.camPos)).toBeGreaterThan(1);
+    }
+    expect(Math.abs(local(scene.view('edge', 0)!.camPos).z)).toBeLessThan(60);
+    expect(Math.abs(local(scene.view('edgenear', 0)!.camPos).z)).toBeLessThan(60);
+    expect(Math.abs(local(scene.view('far', 0)!.camPos).z)).toBeGreaterThan(10000);
   });
 });

@@ -2,7 +2,7 @@
  *  ?auto=perf or ?auto=flicker: a report (auto.ts). For all of them: ?stab=0|1|2 (default 2), &sync=1 builds tiles on
  *  the main thread (the flicker report does so unless sync=0), &profile=1 times each graphics pass, &dbg=1 shows world
  *  cover, and the scale constants of scale.ts. For all of them too, the combat load test (combat.ts):
- *  &scene=combat|heavy, &ships= &bolts= &particles=. For all of them too, the world scenes (world.ts): &scene=gas|moon, and
+ *  &scene=combat|heavy, &ships= &bolts= &particles=. For all of them too, the world scenes (world.ts): &scene=gas|moon|ring, and
  *  &look=<name> for a still of one of the scene's viewpoints.
  *  ?check=occlusion: the occlusion check (check.ts). */
 import { runReport } from './auto';

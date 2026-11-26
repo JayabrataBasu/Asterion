@@ -7,6 +7,7 @@ import {
   type Quat, type Vec3, addScaled, copy, dot, len, norm, qAxisAngle, qIdentity, qMul, qNorm, qRotate, scale, sub, v3,
 } from './math';
 import type { Moon } from './moon';
+import type { Ring } from './ring';
 import { type Planet, altitude, atmoDensity } from './planet';
 import { SCALE } from './scale';
 
@@ -18,6 +19,10 @@ const CRUISE_EXIT = 1.5; // times the atmosphere height
 const AIRLESS_EXIT = 0.5; // of the radius: without an atmosphere, cruise ends no lower than this
 const WALK_BELOW = 500, WALK_STEP = 4;
 const BOUNCE = 1.6, HIT_SPEED = 22;
+/** Closing on a ring rock faster than this chips the hull. */
+const CHIP_SPEED = 5;
+/** Rocks one stretch of movement may strike; past this the ship stays where it is for the rest of it. */
+const MOST_STRIKES = 8;
 
 export interface Input {
   /** Reticle, -1..1: right and nose up are positive. */
@@ -37,6 +42,8 @@ export interface ShipState {
   boostE: number; cruising: boolean; level: boolean; hits: number;
   /** Seconds spent below a gas giant's crush depth, and the hull damage counted for them. */
   crushTime: number; crushDamage: number;
+  /** Hull chips from ring rocks. */
+  chips: number;
   /** Height above the surface after the last step. */
   alt: number;
 }
@@ -45,12 +52,12 @@ export interface ShipState {
 export function newShip(): ShipState {
   return {
     pos: v3(), prevPos: v3(), q: qIdentity(), prevQ: qIdentity(), vel: v3(),
-    boostE: WREN.boostCap, cruising: false, level: true, hits: 0, crushTime: 0, crushDamage: 0, alt: 0,
+    boostE: WREN.boostCap, cruising: false, level: true, hits: 0, crushTime: 0, crushDamage: 0, chips: 0, alt: 0,
   };
 }
 
 /** What else there is to fly among, in a world scene. */
-export interface Surroundings { moon?: Moon }
+export interface Surroundings { moon?: Moon; ring?: Ring }
 
 /** Cruise ends below this height over a body. */
 export function cruiseExit(body: Planet): number {
@@ -59,7 +66,7 @@ export function cruiseExit(body: Planet): number {
 }
 
 // temporaries, so that stepping allocates nothing
-const fwd = v3(), side = v3(), up = v3(), radial = v3(), axis = v3(), turnQ = qIdentity();
+const fwd = v3(), side = v3(), up = v3(), radial = v3(), axis = v3(), rockAt = v3(), turnQ = qIdentity();
 const NOSE = v3(0, 0, -1), RIGHT = v3(1, 0, 0), UP = v3(0, 1, 0);
 
 /** Turns the ship by `rad` about an axis given in its own frame. */
@@ -122,12 +129,18 @@ function sense(s: ShipState, planet: Planet, near?: Surroundings): void {
 
 /** Moves for `dt`, near the ground in short pieces so that no speed or step length can pass through it. */
 function move(s: ShipState, planet: Planet, dt: number, near?: Surroundings): void {
-  let left = dt;
+  let left = dt, strikes = 0;
   while (left > 0) {
     const reach = Math.max(WALK_STEP, s.alt - WALK_BELOW), speed = len(s.vel);
-    const t = speed * left > reach ? reach / speed : left;
+    let t = speed * left > reach ? reach / speed : left;
+    const rock = near?.ring ? near.ring.hit(s.pos, s.vel, t, SHIP_R) : Infinity;
+    if (rock <= t) t = rock;
     addScaled(s.pos, s.pos, s.vel, t);
     left -= t;
+    if (rock !== Infinity) {
+      strike(s, near!.ring!);
+      if (++strikes === MOST_STRIKES) left = 0;
+    }
     sense(s, planet, near);
     dropOutOfCruise(s, planet, near); // checked on the way: a long step may dip below the limit and bounce back out
     if (overPlanet < SHIP_R) contact(s, planet, overPlanet);
@@ -144,6 +157,23 @@ function contact(s: ShipState, body: Planet, alt: number): void {
   if (closing <= 0) return;
   addScaled(s.vel, s.vel, radial, BOUNCE * closing);
   if (closing > HIT_SPEED) s.hits++;
+}
+
+/** Pushes the ship out of the rock the ring last found it meeting, bounces it, and counts a chip. Ends cruise,
+ *  leaving no more than the top speed. */
+function strike(s: ShipState, ring: Ring): void {
+  const rock = ring.met;
+  ring.toWorld(rockAt, rock.u, rock.v, rock.h);
+  norm(radial, sub(radial, s.pos, rockAt));
+  addScaled(s.pos, rockAt, radial, rock.r + SHIP_R + 1e-6);
+  const closing = -dot(s.vel, radial);
+  if (closing <= 0) return;
+  addScaled(s.vel, s.vel, radial, BOUNCE * closing);
+  if (closing > CHIP_SPEED) s.chips++;
+  if (!s.cruising) return;
+  s.cruising = false;
+  const speed = len(s.vel);
+  if (speed > WREN.maxSpeed) scale(s.vel, s.vel, WREN.maxSpeed / speed);
 }
 
 function dropOutOfCruise(s: ShipState, planet: Planet, near?: Surroundings): void {

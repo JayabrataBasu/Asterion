@@ -65,12 +65,12 @@ class ReportCamera {
 
   /** Puts the ship of pose `p`, drawn at step `step`, and the camera into `frame`. */
   place(frame: Frame3, p: PathPose, step: PathStep): void {
-    const moon = this.near?.moon;
+    const moon = this.near?.moon, ring = this.near?.ring;
     moon?.place(step.t);
     if (step.window !== this.window) {
       this.window = step.window;
-      this.chase.snap(p.shipPos, p.shipQ, frame.planet, moon?.body);
-    } else if (step.frame >= 0) this.chase.update(p.shipPos, p.shipQ, frame.planet, DT, moon?.body);
+      this.chase.snap(p.shipPos, p.shipQ, frame.planet, moon?.body, ring);
+    } else if (step.frame >= 0) this.chase.update(p.shipPos, p.shipQ, frame.planet, DT, moon?.body, ring);
     frame.camPos = this.chase.pos; frame.camQ = this.chase.q; frame.time = step.t;
     frame.ship!.pos = p.shipPos; frame.ship!.q = p.shipQ;
   }

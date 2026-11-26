@@ -21,8 +21,8 @@ export function fly(page: Page): void {
   const focus = scene.focus;
   renderer.rockDir = focus;
   const session = new FlightSession(planet, focus, { near: scene.near, start: scene.start?.bind(scene) });
-  const controls = new Controls(), camera = new ChaseCamera(), moon = scene.near?.moon?.body;
-  camera.snap(session.pos, session.q, planet, moon);
+  const controls = new Controls(), camera = new ChaseCamera(), moon = scene.near?.moon?.body, ring = scene.near?.ring;
+  camera.snap(session.pos, session.q, planet, moon, ring);
   // here the swarm keeps its bearing, so that turning moves it across the screen (the reports and the still view
   // let it follow the nose)
   const holdSwarm = (): void => field?.fixHeading(session.pos, session.q, planet);
@@ -61,7 +61,7 @@ export function fly(page: Page): void {
     else if (a === 'readout') info.hidden = !info.hidden;
     else if (a === 'restart') {
       session.restart(controls);
-      camera.snap(session.pos, session.q, planet, moon);
+      camera.snap(session.pos, session.q, planet, moon, ring);
       holdSwarm();
       renderer.resetHistory();
     } else frame.stab = a === 'mode0' ? 0 : a === 'mode1' ? 1 : 2;
@@ -110,7 +110,7 @@ export function fly(page: Page): void {
     if (!since) since = now;
     page.fit();
     session.advance(seconds, controls);
-    camera.update(session.pos, session.q, planet, session.time - drawnTime, moon);
+    camera.update(session.pos, session.q, planet, session.time - drawnTime, moon, ring);
     drawnTime = frame.time = session.time;
     field?.update(session.time, session.pos, session.q, planet);
     renderer.render(frame);
