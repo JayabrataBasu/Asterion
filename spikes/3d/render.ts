@@ -20,7 +20,8 @@ export interface Frame3 {
   camPos: Vec3; camQ: Quat;
   ship: { pos: Vec3; q: Quat } | null;
   planet: Planet; time: number;
-  /** Stability mode, 0 plain, 1 bands only, 2 bands with hysteresis. Carried for Task 6; not applied yet. */
+  /** Stability mode: 0 plain, with a screen-pattern dither on the bands; 1 characters from material and band only;
+   *  2 as 1, a cell changing band only once its luminance passes the edge by HOLD (see keepsHistory). */
   stab: 0 | 1 | 2;
 }
 
@@ -34,6 +35,10 @@ const ROCKS = 150, ROCK_KINDS = 4;
 const UPLOADS_PER_FRAME = 12;
 const BLOOM_LEVELS = 5;
 const ZERO4 = new Float32Array(4), ONE1 = new Float32Array([1]);
+/** Mode 0: peak-to-peak luminance dither on the bands, the size of the 2D game's ramp dither. */
+const DITHER = 0.09;
+/** Mode 2: how far past a band edge the luminance must be before the cell changes band. */
+const HOLD = 0.05;
 /** Resolve glyph table: index order matches the G_* defines in shaders.ts. */
 /** Pass names for the per-pass profile. */
 export const PASSES = ['world', 'resolve', 'ship+match', 'ascii', 'bloom', 'composite'];
@@ -87,6 +92,23 @@ export function evictKeys(entries: { key: number; last: number }[], keep: Set<nu
   const over = entries.length - max;
   if (over <= 0) return [];
   return entries.filter(e => !keep.has(e.key)).sort((a, b) => a.last - b.last).slice(0, over).map(e => e.key);
+}
+
+/** A step of scripted time longer than this (seconds), or any step back, is a jump. */
+const JUMP_S = 0.1;
+
+/** What a frame's stability history depends on. `view` is the camera's position and turn; `tiles` counts changes
+ *  of the drawn tile set. */
+export interface HistoryKey { stab: number; time: number; planet: string; tiles: number; view: number[] }
+
+/** Whether the bands of the frame `prev` may hold those of the frame `now` (`prev` null: there is none). A still view
+ *  whose tiles changed shows new content at the same place, so it starts again; in flight tiles change all the time,
+ *  and the view moving is already what the hysteresis is there for. */
+export function keepsHistory(prev: HistoryKey | null, now: HistoryKey): boolean {
+  if (!prev || prev.stab !== now.stab || prev.planet !== now.planet) return false;
+  const dt = now.time - prev.time;
+  if (!(dt >= 0 && dt <= JUMP_S)) return false;
+  return prev.tiles === now.tiles || prev.view.some((v, i) => v !== now.view[i]);
 }
 
 // ------------------------------------------------------------------ renderer
@@ -149,7 +171,13 @@ export class Renderer3 {
   // size-dependent targets
   private worldFbo: WebGLFramebuffer | null = null; private worldCol: WebGLTexture | null = null;
   private worldNrm: WebGLTexture | null = null; private worldDep: WebGLTexture | null = null;
-  private resolveT: Target | null = null; private sprT: Target | null = null; private sprDepth: WebGLRenderbuffer | null = null;
+  /** The resolve target with two framebuffers onto it: [i] also writes band state i, read by the other next frame. */
+  private resolveT: Target | null = null; private readonly resolveFbo: WebGLFramebuffer[] = [];
+  private readonly bandState: WebGLTexture[] = []; private bandNow = 0;
+  private hist: HistoryKey | null = null;
+  private readonly keys: HistoryKey[] = [0, 1].map(() => ({ stab: 0, time: 0, planet: '', tiles: 0, view: [0, 0, 0, 0, 0, 0, 0] }));
+  private listVersion = 0;
+  private sprT: Target | null = null; private sprDepth: WebGLRenderbuffer | null = null;
   private matchFbo: WebGLFramebuffer | null = null; private matchA: WebGLTexture | null = null; private matchB: WebGLTexture | null = null;
   private compose: Target | null = null; private bloom: Target[] = []; private glyphT: Target | null = null;
   private haloT: Target | null = null;
@@ -197,7 +225,7 @@ export class Renderer3 {
     this.pHalo = this.prog(VS_FULLSCREEN, S.FS_HALO);
     const world = ['uVP', 'uOff', 'uPlanet', 'uR', 'uFC', 'uSpacing', 'uCellK', 'uRelief'];
     this.uTile = this.locs(this.pTile, world); this.uRock = this.locs(this.pRock, world);
-    this.uResolve = this.locs(this.pResolve, ['uCol', 'uDep', 'uCells', 'uCamRot', 'uTan', 'uEye', 'uR', 'uAtmo', 'uTime', 'uSunK', 'uG', 'uFC', 'uDebug']);
+    this.uResolve = this.locs(this.pResolve, ['uCol', 'uDep', 'uCells', 'uCamRot', 'uTan', 'uEye', 'uR', 'uAtmo', 'uTime', 'uSunK', 'uG', 'uFC', 'uDebug', 'uPrev', 'uDither', 'uHold']);
     this.uShip = this.locs(this.pShip, ['uVP', 'uRot', 'uOff', 'uFC', 'uDep', 'uSky']);
     this.uMatch = this.locs(this.pMatch, ['uSpr', 'uSig', 'uCand', 'uNC', 'uFill']);
     this.uAscii = this.locs(this.pAscii, ['uScene', 'uRamp', 'uAtlas', 'uMA', 'uMB', 'uCells', 'uOrigin', 'uCellPx', 'uExposure', 'uDither', 'uBgK', 'uFgBase', 'uFgGain', 'uTime', 'uReveal', 'uLayers', 'uQZ', 'uQN', 'uWorldCell', 'uHalo']);
@@ -322,6 +350,10 @@ export class Renderer3 {
     }
     for (const t of [this.resolveT, this.sprT, this.compose, this.glyphT, this.haloT, ...this.bloom]) this.free(t);
     this.bloom = [];
+    if (this.resolveFbo.length) gl.deleteFramebuffer(this.resolveFbo[1]); // [0] is resolveT's own, freed above
+    for (const t of this.bandState) gl.deleteTexture(t);
+    this.resolveFbo.length = 0; this.bandState.length = 0;
+    this.hist = null; // new targets: no band history
 
     // pass 1: colour + material, normal, log depth (a texture, read by the resolve and the ship pass)
     this.worldCol = this.colorTex(cols * 2, rows * 4); this.worldNrm = this.colorTex(cols * 2, rows * 4, false, true);
@@ -335,6 +367,15 @@ export class Renderer3 {
     this.checkFbo('world');
 
     this.resolveT = this.target(cols, rows);
+    this.resolveFbo.push(this.resolveT.fbo, gl.createFramebuffer()!);
+    for (let i = 0; i < 2; i++) {
+      this.bandState.push(this.colorTex(cols, rows, false, true));
+      gl.bindFramebuffer(gl.FRAMEBUFFER, this.resolveFbo[i]);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.resolveT.tex, 0);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.bandState[i], 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+      this.checkFbo('resolve');
+    }
     this.sprT = this.target(cols * 4, rows * 8);
     this.sprDepth = gl.createRenderbuffer()!; gl.bindRenderbuffer(gl.RENDERBUFFER, this.sprDepth);
     gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, cols * 4, rows * 8);
@@ -519,6 +560,7 @@ export class Renderer3 {
     if (this.dirty) {
       this.queueDirty = true;
       this.drawList = resolveDrawList(this.wanted, has).map(t => this.cache.get(tileKey(t))!);
+      this.listVersion++;
       this.dirty = false;
     }
     let missing = 0;
@@ -626,12 +668,16 @@ export class Renderer3 {
     // ---- pass 2: resolve, one pixel per cell
     this.mark(1);
     gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.resolveT!.fbo); gl.viewport(0, 0, cols, rows);
+    const hold = this.stepHistory(f);
+    this.bandNow = 1 - this.bandNow;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.resolveFbo[this.bandNow]); gl.viewport(0, 0, cols, rows);
     gl.useProgram(this.pResolve); gl.bindVertexArray(this.vaoEmpty);
     gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.worldCol);
     gl.activeTexture(gl.TEXTURE6); gl.bindTexture(gl.TEXTURE_2D, this.worldDep);
+    gl.activeTexture(gl.TEXTURE8); gl.bindTexture(gl.TEXTURE_2D, this.bandState[1 - this.bandNow]);
     u = this.uResolve;
-    gl.uniform1i(u.uCol, 3); gl.uniform1i(u.uDep, 6);
+    gl.uniform1i(u.uCol, 3); gl.uniform1i(u.uDep, 6); gl.uniform1i(u.uPrev, 8);
+    gl.uniform1f(u.uDither, f.stab === 0 ? DITHER : 0); gl.uniform1f(u.uHold, f.stab === 2 && hold ? HOLD : 0);
     gl.uniform2i(u.uCells, cols, rows);
     qRotate(this.axX, f.camQ, v3x); qRotate(this.axY, f.camQ, v3y); qRotate(this.axZ, f.camQ, v3z);
     this.rot[0] = this.axX.x; this.rot[1] = this.axX.y; this.rot[2] = this.axX.z;
@@ -745,6 +791,16 @@ export class Renderer3 {
     this.timerEnd();
 
     this.stats.tiles = tiles; this.stats.tris = tris;
+  }
+
+  /** Whether this frame may hold the last one's bands, and remembers this frame for the next. */
+  private stepHistory(f: Frame3): boolean {
+    const now = this.keys[this.hist === this.keys[0] ? 1 : 0], v = now.view, p = f.camPos, q = f.camQ;
+    now.stab = f.stab; now.time = f.time; now.planet = this.planetKey; now.tiles = this.listVersion;
+    v[0] = p.x; v[1] = p.y; v[2] = p.z; v[3] = q.x; v[4] = q.y; v[5] = q.z; v[6] = q.w;
+    const keep = keepsHistory(this.hist, now);
+    this.hist = now;
+    return keep;
   }
 
   /** The character index shown in each cell of the last frame, row by row from the top: the ship's or the

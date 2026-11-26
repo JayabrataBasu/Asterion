@@ -1,7 +1,36 @@
 import { describe, expect, it } from 'vitest';
 import { v3 } from './math';
 import { type TileId, tileKey } from './tiles';
-import { beyondHorizon, evictKeys, inView, requestOrder } from './render';
+import { type HistoryKey, beyondHorizon, evictKeys, inView, keepsHistory, requestOrder } from './render';
+
+describe('keepsHistory (stability history between frames)', () => {
+  const key = (o: Partial<HistoryKey> = {}): HistoryKey =>
+    ({ stab: 2, time: 10, planet: 'a', tiles: 3, view: [1, 2, 3, 0, 0, 0, 1], ...o });
+  const moved = [1, 2, 5, 0, 0, 0, 1], turned = [1, 2, 3, 0, 0.1, 0, 0.995];
+
+  it('has none on the first frame, which is also the first after a resize', () => {
+    expect(keepsHistory(null, key())).toBe(false);
+  });
+  it('keeps it for a still frame and for the next frame of a flight', () => {
+    expect(keepsHistory(key(), key())).toBe(true);
+    expect(keepsHistory(key(), key({ time: 10 + 1 / 60, view: moved }))).toBe(true);
+    expect(keepsHistory(key(), key({ time: 10 + 1 / 30, view: turned }))).toBe(true);
+  });
+  it('drops it on a mode change or another planet', () => {
+    expect(keepsHistory(key({ stab: 1 }), key())).toBe(false);
+    expect(keepsHistory(key(), key({ planet: 'b' }))).toBe(false);
+  });
+  it('drops it when the time jumps ahead or goes back', () => {
+    expect(keepsHistory(key(), key({ time: 10.2 }))).toBe(false);
+    expect(keepsHistory(key(), key({ time: 37 }))).toBe(false);
+    expect(keepsHistory(key(), key({ time: 9.99 }))).toBe(false);
+  });
+  it('drops it when the tiles change under a still view, but not in flight', () => {
+    expect(keepsHistory(key(), key({ tiles: 4 }))).toBe(false);
+    expect(keepsHistory(key(), key({ tiles: 4, view: moved }))).toBe(true);
+    expect(keepsHistory(key(), key({ tiles: 4, view: turned }))).toBe(true);
+  });
+});
 
 describe('inView (view space, camera looks along -Z)', () => {
   const tanY = Math.tan(Math.PI / 6), aspect = 16 / 9, near = 0.5;

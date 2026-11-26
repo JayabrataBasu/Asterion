@@ -109,7 +109,12 @@ const G = `
 #define G_SEMI uG[13]`;
 
 /** One fragment per cell: reads the cell's 2x4 world samples (and a ring of one around them) and writes rgb +
- *  glyph/255 as FS_ASCII expects. Glyph 0 leaves the choice to FS_ASCII's luminance ramp (sky, night side). */
+ *  glyph/255 as FS_ASCII expects. Glyph 0 leaves the choice to FS_ASCII's luminance ramp (sky, night side).
+ *  Banded cells (terrain and dense haze) take one of three characters of a family by luminance. uDither moves the
+ *  luminance by a screen-anchored pattern first (mode 0). uHold keeps the previous frame's band until the luminance
+ *  passes its edge by that much, within the same family (mode 2); that frame's families and bands come in through
+ *  uPrev, and this frame's go out through oState: family / 255 in red (see FAM_*, 0 = not banded), band / 255 in
+ *  green. A cell showing an edge character keeps the state of the band underneath. */
 export const FS_RESOLVE = `#version 300 es
 precision highp float; precision highp int;
 uniform sampler2D uCol; uniform sampler2D uDep;
@@ -120,7 +125,10 @@ uniform vec3 uEye;       // camera relative to the planet's centre
 uniform float uR, uAtmo, uTime, uSunK;
 uniform int uDebug;      // 1: terrain red, no fog (prototype check)
 uniform float uG[16];
-out vec4 o;
+uniform sampler2D uPrev;     // last frame's oState
+uniform float uDither, uHold;
+layout(location = 0) out vec4 o;
+layout(location = 1) out vec4 oState;
 ${NOISE}
 ${LOGDEPTH}
 ${G}
@@ -160,8 +168,33 @@ float edgeGlyph(vec2 t){
   return (a < 0.3927 || a > 2.7489) ? G_DASH : a < 1.1781 ? G_SL : a < 1.9635 ? G_BAR : G_BS;
 }
 
+// glyph families: the world materials 1 water, 2 land, 3 ice, 4 rock, and dense haze
+#define FAM_WATER 1
+#define FAM_ICE 3
+#define FAM_HAZE 5
+
 /** Darkest to brightest by luminance, band edges 0.18 and 0.45. */
-float band(float lum, float a, float b, float c){ return lum < 0.18 ? a : lum < 0.45 ? b : c; }
+int bandOf(float lum){ return lum < 0.18 ? 0 : lum < 0.45 ? 1 : 2; }
+
+float bayer4(ivec2 c){   // as FS_ASCII's
+  int x = c.x & 3, y = c.y & 3;
+  int m[16] = int[16](0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5);
+  return (float(m[y*4 + x]) + 0.5) / 16.0;
+}
+
+/** The character of a banded cell, and its state for the next frame. */
+float banded(int fam, float lum, ivec2 cell){
+  lum += (bayer4(cell) - 0.5) * uDither;
+  int b = bandOf(lum);
+  if (uHold > 0.0) {
+    vec2 prev = texelFetch(uPrev, cell, 0).rg * 255.0;
+    if (int(prev.r + 0.5) == fam) b = clamp(int(prev.g + 0.5), bandOf(lum - uHold), bandOf(lum + uHold));
+  }
+  oState = vec4(float(fam) / 255.0, float(b) / 255.0, 0.0, 1.0);
+  vec3 g = fam == FAM_HAZE ? vec3(G_COMMA, G_COLON, G_SEMI) : fam == FAM_WATER ? vec3(G_DASH, G_TILDE, G_EQ)
+    : fam == FAM_ICE ? vec3(G_DOT, G_TICK, G_STAR) : vec3(G_COLON, G_PCT, G_HASH);
+  return g[b];
+}
 
 /** The star whose direction cell is gc on the cube face, if it lands in this character cell. */
 vec3 star(vec2 gc, vec3 face, int axis, ivec2 cell){
@@ -200,6 +233,7 @@ vec3 sky(vec3 d, ivec2 cell, out vec3 stars){
 
 void main(){
   ivec2 cell = ivec2(gl_FragCoord.xy);
+  oState = vec4(0.0);
   ivec2 base = cell * ivec2(2, 4);
   ivec2 lim = uCells * ivec2(2, 4) - 1;
   vec2 ndc = (vec2(cell) + 0.5) / vec2(uCells) * 2.0 - 1.0;
@@ -237,7 +271,7 @@ void main(){
     float sl = dot(stars, vec3(0.2126, 0.7152, 0.0722));
     float glyph = 0.0;
     if (sl > 0.03) { glyph = sl > 0.2 ? G_STAR : sl > 0.09 ? G_TICK : G_DOT; rgb += stars * 1.5; }
-    if (a > 0.8) glyph = band(dot(rgb, vec3(0.2126, 0.7152, 0.0722)), G_COMMA, G_COLON, G_SEMI);   // dense haze
+    if (a > 0.8) glyph = banded(FAM_HAZE, dot(rgb, vec3(0.2126, 0.7152, 0.0722)), cell);   // dense haze
     o = vec4(rgb, glyph);
     return;
   }
@@ -252,12 +286,8 @@ void main(){
 
   int mat = 1;
   for (int i = 2; i <= 4; i++) if (mcount[i] > mcount[mat]) mat = i;
-  float glyph;
-  if (fog > 0.6) glyph = band(lum, G_COMMA, G_COLON, G_SEMI);
-  else if (mat == 1) glyph = band(lum, G_DASH, G_TILDE, G_EQ);
-  else if (mat == 3) glyph = band(lum, G_DOT, G_TICK, G_STAR);
-  else glyph = band(lum, G_COLON, G_PCT, G_HASH);
-  if (lum < 0.02) glyph = 0.0;                                  // night: the plain ramp, which is blank this dark
+  float glyph = 0.0;                                            // night: the plain ramp, which is blank this dark
+  if (lum >= 0.02) glyph = banded(fog > 0.6 ? FAM_HAZE : mat, lum, cell);
 
   // edges: part sky, or a step in depth whose near side is in this cell
   vec2 edge = vec2(0.0);
