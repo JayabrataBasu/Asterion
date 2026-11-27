@@ -5,7 +5,6 @@
  *  in the slot its place in the window wraps onto. A rock is seen from viewDistance(radius) in, growing from nothing
  *  at that distance to full size at FULL of it. */
 import { clamp } from '../../src/core/util';
-import { inView } from './cull';
 import { type Quat, type Vec3, qRotate, v3 } from './math';
 import { CELL, KINDS, LAYER, type Ring, newRingRock } from './ring';
 
@@ -13,6 +12,8 @@ export const LODS = 3, BUCKETS = KINDS * LODS;
 /** Instances a bucket (shape and detail) has room for. */
 export const CAPACITY = 512;
 const NEAREST = 300, FARTHEST = 1300, FULL = 0.75;
+/** The view's near distance, as the renderer's. */
+const NEAR = 0.5;
 /** Cells from the camera's to the window's edge. */
 const REACH = Math.ceil(FARTHEST / CELL);
 const SIDE = 2 * REACH + 1;
@@ -46,11 +47,14 @@ export class RockField {
   /** Lists what to draw from `eye`; `cull`: only what the camera (turned back by `invQ`) can see. */
   update(eye: Vec3, invQ: Quat, tanY: number, aspect: number, cellK: number, cull: boolean): void {
     this.count.fill(0); this.total = 0; this.dropped = 0; this.filled = 0;
-    const ring = this.ring, l = ring.toLocal(this.local, eye), rho = Math.hypot(l.x, l.y);
+    const ring = this.ring, l = ring.toLocal(this.local, eye), rho = Math.sqrt(l.x * l.x + l.y * l.y);
     if (Math.abs(l.z) > FARTHEST + LAYER || rho > ring.outer + FARTHEST + CELL || rho < ring.inner - FARTHEST - CELL) return;
     const ci = Math.floor(l.x / CELL), cj = Math.floor(l.y / CELL), rocks = this.rocks, rel = this.rel;
     const c = ring.center, a = ring.e1, b = ring.e2, n = ring.n;
     const widest = (FARTHEST / CELL + 1.5) ** 2;
+    // the view test of cull.ts inView, written out here with its slopes worked out once: calling it for each rock
+    // allocates (Math.hypot, and numbers boxed for the call)
+    const tanX = tanY * aspect, kx = 1 / Math.sqrt(1 + tanX * tanX), ky = 1 / Math.sqrt(1 + tanY * tanY);
     for (let dj = -REACH; dj <= REACH; dj++) {
       for (let di = -REACH; di <= REACH; di++) {
         if (di * di + dj * dj > widest) continue;
@@ -76,7 +80,12 @@ export class RockField {
           rel.x = c.x - eye.x + a.x * rocks[o] + b.x * rocks[o + 1] + n.x * rocks[o + 2];
           rel.y = c.y - eye.y + a.y * rocks[o] + b.y * rocks[o + 1] + n.y * rocks[o + 2];
           rel.z = c.z - eye.z + a.z * rocks[o] + b.z * rocks[o + 1] + n.z * rocks[o + 2];
-          if (cull && !inView(qRotate(this.view, invQ, rel), r, tanY, aspect, 0.5)) continue;
+          if (cull) {
+            const p = qRotate(this.view, invQ, rel);
+            if (-p.z + r < NEAR) continue;
+            if ((p.x + tanX * p.z) * kx > r || (-p.x + tanX * p.z) * kx > r) continue;
+            if ((p.y + tanY * p.z) * ky > r || (-p.y + tanY * p.z) * ky > r) continue;
+          }
           const kind = rocks[o + 4], cells = r / (Math.max(d, 1) * cellK);
           const bucket = kind * LODS + (cells > FINE ? 0 : cells > MIDDLE ? 1 : 2);
           if (this.count[bucket] >= CAPACITY) { this.dropped++; continue; }

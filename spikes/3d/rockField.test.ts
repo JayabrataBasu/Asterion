@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { qIdentity, v3 } from './math';
-import { newRingRock } from './ring';
+import { inView } from './cull';
+import { qAxisAngle, qIdentity, qRotate, v3 } from './math';
+import { CELL, LAYER, newRingRock } from './ring';
 import { BUCKETS, CAPACITY, LODS, RockField, viewDistance } from './rockField';
 import { KINDS } from './ring';
 import { makeWorld } from './world';
@@ -97,5 +98,43 @@ describe('the streamed rock field', () => {
     field.update(middle, qIdentity(), TAN, ASPECT, CELL_K, true);
     expect(field.total).toBeGreaterThan(0);
     expect(field.total).toBeLessThan(all * 0.5);
+  });
+
+  it('culls exactly the rocks whose collision ball the view test rejects', () => {
+    const field = new RockField(ring, scales), rock = newRingRock();
+    const key = (d: Float32Array, o: number): string => `${d[o].toFixed(2)} ${d[o + 1].toFixed(2)} ${d[o + 2].toFixed(2)}`;
+    const listed = (): number[] => {
+      const out: number[] = [];
+      for (let b = 0; b < BUCKETS; b++) for (let i = 0; i < field.count[b]; i++) out.push((b * CAPACITY + i) * 8);
+      return out;
+    };
+    // many views, so that rocks lie close to every side of one of them
+    let checked = 0;
+    for (let n = 0; n < 60; n++) {
+      const h = [0, 10, 120, -60][n % 4], angle = n * 0.7;
+      const eye = ring.toWorld(v3(), 40, 12610, h), q = qAxisAngle(qIdentity(), v3(0.48, 0.6, 0.64), angle);
+      field.update(eye, q, TAN, ASPECT, CELL_K, false);
+      const seen: string[] = [];
+      for (const o of listed()) {
+        const rel = v3(field.data[o], field.data[o + 1], field.data[o + 2]);
+        const l = ring.toLocal(v3(), v3(rel.x + eye.x, rel.y + eye.y, rel.z + eye.z));
+        expect(ring.rockAt(Math.floor(l.x / CELL), Math.floor(l.y / CELL), Math.floor((l.z + LAYER) / LAYER), rock)).toBe(true);
+        if (inView(qRotate(v3(), q, rel), rock.r, TAN, ASPECT, 0.5)) seen.push(key(field.data, o));
+      }
+      field.update(eye, q, TAN, ASPECT, CELL_K, true);
+      expect(listed().map(o => key(field.data, o)).sort()).toEqual(seen.sort());
+      checked += seen.length;
+    }
+    expect(checked).toBeGreaterThan(1000);
+    // a rock just behind the camera, close enough that only the near distance rejects it (the camera looks along -Z)
+    let i = 0;
+    while (!ring.rockAt(i, 200, 1, rock) || rock.r < 9) i++;
+    const at = ring.toWorld(v3(), rock.u, rock.v, rock.h), behind = 1.05 * rock.r;
+    const holds = (cull: boolean): boolean => {
+      field.update(v3(at.x, at.y, at.z - behind), qIdentity(), TAN, ASPECT, CELL_K, cull);
+      return listed().some(o => Math.hypot(field.data[o], field.data[o + 1], field.data[o + 2] - behind) < 0.01);
+    };
+    expect(holds(false)).toBe(true);
+    expect(holds(true)).toBe(false);
   });
 });
