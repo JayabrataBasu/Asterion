@@ -7,3 +7,6 @@ dist
 # generated screenshots: regenerate with scripts/golden.mjs, never commit
 docs/screens/
 test/golden/
+
+# generated reports, design notes and screenshots: local only, never commit
+artifacts/
