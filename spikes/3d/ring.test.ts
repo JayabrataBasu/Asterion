@@ -162,6 +162,7 @@ describe('flying into a ring rock', () => {
   const dirs = [v3(1, 0, 0), v3(0, -1, 0), norm(v3(), v3(0.4, 0.5, -0.77)), v3(0, 0, 1)];
 
   it('does not pass through it in one 0.25 s step at boost speed; the ship is pushed out and a chip counted', () => {
+    let tested = 0;
     for (let n = 0; n < rocks.length; n++) {
       const { rock, at } = rocks[n], d = dirs[n % dirs.length], gap = rock.r + SHIP_R + 12;
       const s = shipAt(addScaled(v3(), at, d, -gap), d, BOOST_TOP);
@@ -172,10 +173,13 @@ describe('flying into a ring rock', () => {
       expect(dot(sub(v3(), s.pos, at), d)).toBeLessThan(0);
       expect(s.chips).toBeGreaterThanOrEqual(1);
       expect(dot(s.vel, d)).toBeLessThan(0);
+      tested++;
     }
+    expect(tested).toBeGreaterThanOrEqual(36); // 40 when written: a skip must not let this pass empty
   });
 
   it('does not pass through it at any speed, grazing included', () => {
+    let tested = 0;
     for (const speed of [300, 3000, 30000, 1e6]) {
       for (let n = 0; n < rocks.length; n += 3) {
         const { rock, at } = rocks[n], d = dirs[n % dirs.length], pad = rock.r + SHIP_R;
@@ -187,9 +191,11 @@ describe('flying into a ring rock', () => {
           stepShip(s, input(), planet, 0.25, { ring });
           expect(s.chips).toBeGreaterThanOrEqual(1);
           expect(clearance(s.pos)).toBeGreaterThanOrEqual(SHIP_R - 1e-6);
+          tested++;
         }
       }
     }
+    expect(tested).toBeGreaterThanOrEqual(100); // 112 when written
   });
 
   it('is never inside any rock, whatever the heading and speed', () => {
